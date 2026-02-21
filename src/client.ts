@@ -7,8 +7,16 @@ import { decrypt, encrypt } from 'tplink-smarthome-crypto';
 import type { MarkOptional } from 'ts-essentials';
 
 import Bulb from './bulb';
+import {
+  type CredentialOptions,
+  type Credentials,
+  normalizeCredentialOptions,
+  redactCredentialOptions,
+} from './credentials';
 import Device, { isBulbSysinfo, isPlugSysinfo, type Sysinfo } from './device';
 import createLogger, { type Logger } from './logger';
+import type { DeviceConnection } from './network/connection';
+import KlapConnection from './network/klap-connection';
 import TcpConnection from './network/tcp-connection';
 import UdpConnection from './network/udp-connection';
 import Plug, { hasSysinfoChildren } from './plug';
@@ -63,7 +71,7 @@ function isSysinfoResponse(candidate: unknown): candidate is SysinfoResponse {
   );
 }
 
-export interface ClientConstructorOptions {
+export interface ClientConstructorOptions extends CredentialOptions {
   /**
    * @defaultValue \{
    *   timeout: 10000,
@@ -148,13 +156,13 @@ export interface DiscoveryOptions {
  * Send Options.
  *
  * @typeParam timeout - (ms)
- * @typeParam transport - 'tcp','udp'
+ * @typeParam transport - 'tcp','udp','klap'
  * @typeParam useSharedSocket - attempt to reuse a shared socket if available, UDP only
  * @typeParam sharedSocketTimeout - (ms) how long to wait for another send before closing a shared socket. 0 = never automatically close socket
  */
 export type SendOptions = {
   timeout?: number;
-  transport?: 'tcp' | 'udp';
+  transport?: 'tcp' | 'udp' | 'klap';
   useSharedSocket?: boolean;
   sharedSocketTimeout?: number;
 };
@@ -242,6 +250,10 @@ class Client extends EventEmitter {
 
   log: Logger;
 
+  readonly credentials?: Credentials;
+
+  readonly credentialsHash?: string;
+
   devices: Map<string, AnyDeviceDiscovery> = new Map();
 
   discoveryTimer: NodeJS.Timeout | null = null;
@@ -257,6 +269,10 @@ class Client extends EventEmitter {
   constructor(options: ClientConstructorOptions = {}) {
     super();
     const { defaultSendOptions, logLevel = 'warn', logger } = options;
+    const normalizedCredentials = normalizeCredentialOptions(
+      options,
+      'client constructor options',
+    );
 
     this.defaultSendOptions = {
       ...this.defaultSendOptions,
@@ -264,6 +280,8 @@ class Client extends EventEmitter {
     };
 
     this.log = createLogger({ logger, level: logLevel });
+    this.credentials = normalizedCredentials.credentials;
+    this.credentialsHash = normalizedCredentials.credentialsHash;
   }
 
   /**
@@ -273,6 +291,28 @@ class Client extends EventEmitter {
   getNextSocketId(): number {
     this.maxSocketId += 1;
     return this.maxSocketId;
+  }
+
+  /**
+   * @internal
+   */
+  createConnection(
+    transport: 'tcp' | 'udp' | 'klap',
+    host: string,
+    port: number,
+    credentialOptions?: CredentialOptions,
+  ): DeviceConnection {
+    if (transport === 'udp') {
+      return new UdpConnection(host, port, this.log, this);
+    }
+    if (transport === 'klap') {
+      return new KlapConnection(host, port, this.log, this, {
+        credentials: credentialOptions?.credentials ?? this.credentials,
+        credentialsHash:
+          credentialOptions?.credentialsHash ?? this.credentialsHash,
+      });
+    }
+    return new TcpConnection(host, port, this.log, this);
   }
 
   /**
@@ -301,7 +341,7 @@ class Client extends EventEmitter {
   async send(
     payload: Record<string, unknown> | string,
     host: string,
-    port = 9999,
+    port?: number,
     sendOptions?: SendOptions,
   ): Promise<string> {
     const thisSendOptions = {
@@ -310,20 +350,25 @@ class Client extends EventEmitter {
       useSharedSocket: false,
     };
 
+    const effectivePort =
+      port ?? (thisSendOptions.transport === 'klap' ? 80 : 9999);
+
     const payloadString = !(typeof payload === 'string')
       ? JSON.stringify(payload)
       : payload;
 
-    let connection: UdpConnection | TcpConnection;
-
-    if (thisSendOptions.transport === 'udp') {
-      connection = new UdpConnection(host, port, this.log, this);
-    } else {
-      connection = new TcpConnection(host, port, this.log, this);
-    }
+    const connection = this.createConnection(
+      thisSendOptions.transport,
+      host,
+      effectivePort,
+      {
+        credentials: this.credentials,
+        credentialsHash: this.credentialsHash,
+      },
+    );
     const response = await connection.send(
       payloadString,
-      port,
+      effectivePort,
       host,
       thisSendOptions,
     );
@@ -433,7 +478,10 @@ class Client extends EventEmitter {
     deviceOptions: AnyDeviceOptionsConstructable,
     sendOptions?: SendOptions,
   ): Promise<AnyDevice> {
-    this.log.debug('client.getDevice(%j)', { deviceOptions, sendOptions });
+    this.log.debug('client.getDevice(%j)', {
+      deviceOptions: redactCredentialOptions(deviceOptions),
+      sendOptions,
+    });
     let sysInfo: Sysinfo;
     if ('sysInfo' in deviceOptions && deviceOptions.sysInfo !== undefined) {
       sysInfo = deviceOptions.sysInfo;
@@ -517,7 +565,10 @@ class Client extends EventEmitter {
    * @fires  Client#discovery-invalid
    */
   startDiscovery(options: DiscoveryOptions = {}): this {
-    this.log.debug('client.startDiscovery(%j)', options);
+    this.log.debug(
+      'client.startDiscovery(%j)',
+      redactCredentialOptions(options),
+    );
 
     const {
       address,

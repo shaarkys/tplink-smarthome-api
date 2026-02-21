@@ -85,5 +85,6 @@ export type {
 export type { default as Time } from './shared/time';
 
 export type { LogLevelMethodNames, Logger } from './logger';
+export type { CredentialOptions, Credentials } from './credentials';
 
 export { ResponseError, type HasErrCode } from './utils';

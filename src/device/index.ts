@@ -4,9 +4,14 @@ import type log from 'loglevel';
 
 import type { BulbSysinfo } from '../bulb';
 import type { default as Client, SendOptions } from '../client'; // eslint-disable-line import/no-named-default
+import {
+  type CredentialOptions,
+  type Credentials,
+  mergeCredentialOptions,
+  redactCredentialOptions,
+} from '../credentials';
 import type { Logger } from '../logger';
-import TcpConnection from '../network/tcp-connection';
-import UdpConnection from '../network/udp-connection';
+import type { DeviceConnection } from '../network/connection';
 import type { PlugSysinfo } from '../plug';
 import type { RealtimeNormalized } from '../shared/emeter';
 import {
@@ -34,7 +39,7 @@ export interface ApiModuleNamespace {
 
 export type Sysinfo = BulbSysinfo | PlugSysinfo;
 
-export interface DeviceConstructorOptions {
+export interface DeviceConstructorOptions extends CredentialOptions {
   client: Client;
   host: string;
   /**
@@ -136,9 +141,14 @@ abstract class Device extends EventEmitter {
 
   readonly defaultSendOptions: SendOptions;
 
-  private readonly udpConnection: UdpConnection;
+  readonly credentials?: Credentials;
 
-  private readonly tcpConnection: TcpConnection;
+  readonly credentialsHash?: string;
+
+  private readonly connections: Record<
+    'udp' | 'tcp' | 'klap',
+    DeviceConnection
+  >;
 
   protected _sysInfo: Sysinfo;
 
@@ -159,16 +169,18 @@ abstract class Device extends EventEmitter {
       // eslint-disable-next-line @typescript-eslint/naming-convention
       _sysInfo,
       host,
-      port = 9999,
+      port,
       logger,
       defaultSendOptions,
+      credentials,
+      credentialsHash,
     } = options;
 
     // Log first as methods below may call `log`
     this.log = logger || client.log;
     this.log.debug('device.constructor(%j)', {
       // eslint-disable-next-line prefer-rest-params
-      ...arguments[0],
+      ...redactCredentialOptions(arguments[0]),
       client: 'not shown',
     });
 
@@ -176,26 +188,33 @@ abstract class Device extends EventEmitter {
     // eslint-disable-next-line no-underscore-dangle
     this._sysInfo = _sysInfo;
     this.host = host;
-    this.port = port;
+    this.port =
+      port ?? (client.defaultSendOptions.transport === 'klap' ? 80 : 9999);
 
     this.defaultSendOptions = {
       ...client.defaultSendOptions,
       ...defaultSendOptions,
     };
 
-    this.udpConnection = new UdpConnection(
-      this.host,
-      this.port,
-      this.log,
-      this.client,
+    const mergedCredentials = mergeCredentialOptions(
+      {
+        credentials: client.credentials,
+        credentialsHash: client.credentialsHash,
+      },
+      { credentials, credentialsHash },
+      'device constructor options',
     );
+    this.credentials = mergedCredentials.credentials;
+    this.credentialsHash = mergedCredentials.credentialsHash;
 
-    this.tcpConnection = new TcpConnection(
-      this.host,
-      this.port,
-      this.log,
-      this.client,
-    );
+    this.connections = {
+      udp: this.client.createConnection('udp', this.host, this.port),
+      tcp: this.client.createConnection('tcp', this.host, this.port),
+      klap: this.client.createConnection('klap', this.host, this.port, {
+        credentials: this.credentials,
+        credentialsHash: this.credentialsHash,
+      }),
+    };
   }
 
   /**
@@ -321,8 +340,9 @@ abstract class Device extends EventEmitter {
    * Closes any open network connections including any shared sockets.
    */
   closeConnection(): void {
-    this.udpConnection.close();
-    this.tcpConnection.close();
+    this.connections.udp.close();
+    this.connections.tcp.close();
+    this.connections.klap.close();
   }
 
   /**
@@ -345,15 +365,8 @@ abstract class Device extends EventEmitter {
         ? JSON.stringify(payload)
         : payload;
 
-      if (thisSendOptions.transport === 'udp') {
-        return await this.udpConnection.send(
-          payloadString,
-          this.port,
-          this.host,
-          thisSendOptions,
-        );
-      }
-      return await this.tcpConnection.send(
+      const connection = this.connections[thisSendOptions.transport];
+      return await connection.send(
         payloadString,
         this.port,
         this.host,

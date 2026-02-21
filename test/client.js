@@ -49,6 +49,80 @@ describe('Client', function () {
       expect(debugSpy).to.be.calledOnce;
       expect(infoSpy).to.be.calledOnce;
     });
+
+    it('should accept credentials and credentialsHash', function () {
+      const client = new Client({
+        credentials: { username: 'user@example.com', password: 'secret' },
+        credentialsHash: 'hash123',
+      });
+      expect(client.credentials).to.deep.equal({
+        username: 'user@example.com',
+        password: 'secret',
+      });
+      expect(client.credentialsHash).to.equal('hash123');
+    });
+
+    it('should reject partial credentials', function () {
+      expect(
+        () =>
+          new Client({
+            credentials: { username: 'user@example.com' },
+          }),
+      ).to.throw(TypeError, 'credentials.password is required');
+    });
+
+    it('should apply credential precedence from client to device with device override', function () {
+      const client = new Client({
+        credentials: { username: 'client-user', password: 'client-pass' },
+        credentialsHash: 'client-hash',
+      });
+      const sysInfo = validPlugDiscoveryResponse.system.get_sysinfo;
+
+      const plugDefault = client.getDeviceFromSysInfo(sysInfo, {
+        host: '127.0.0.1',
+      });
+      expect(plugDefault.credentials).to.deep.equal({
+        username: 'client-user',
+        password: 'client-pass',
+      });
+      expect(plugDefault.credentialsHash).to.equal('client-hash');
+
+      const plugOverride = client.getDeviceFromSysInfo(sysInfo, {
+        host: '127.0.0.1',
+        credentials: { username: 'device-user', password: 'device-pass' },
+        credentialsHash: 'device-hash',
+      });
+      expect(plugOverride.credentials).to.deep.equal({
+        username: 'device-user',
+        password: 'device-pass',
+      });
+      expect(plugOverride.credentialsHash).to.equal('device-hash');
+    });
+
+    it('should redact credentials in getDevice debug logging', async function () {
+      const debugSpy = sinon.spy();
+      const logger = {
+        trace: () => {},
+        debug: debugSpy,
+        info: () => {},
+        warn: () => {},
+        error: () => {},
+      };
+      const client = new Client({ logger, logLevel: 'debug' });
+      const sysInfo = validPlugDiscoveryResponse.system.get_sysinfo;
+
+      const device = await client.getDevice({
+        host: '127.0.0.1',
+        sysInfo,
+        credentials: { username: 'device-user', password: 'do-not-log' },
+        credentialsHash: 'do-not-log-hash',
+      });
+
+      const allArgs = JSON.stringify(debugSpy.args);
+      expect(allArgs).to.not.include('do-not-log');
+      expect(allArgs).to.not.include('do-not-log-hash');
+      device.closeConnection();
+    });
   });
 
   describe('KS240-style child wiring', function () {
