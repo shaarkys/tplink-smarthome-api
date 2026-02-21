@@ -16,6 +16,7 @@ import {
 import Device, { isBulbSysinfo, isPlugSysinfo, type Sysinfo } from './device';
 import createLogger, { type Logger } from './logger';
 import type { DeviceConnection } from './network/connection';
+import KlapConnection from './network/klap-connection';
 import TcpConnection from './network/tcp-connection';
 import UdpConnection from './network/udp-connection';
 import Plug, { hasSysinfoChildren } from './plug';
@@ -155,13 +156,13 @@ export interface DiscoveryOptions {
  * Send Options.
  *
  * @typeParam timeout - (ms)
- * @typeParam transport - 'tcp','udp'
+ * @typeParam transport - 'tcp','udp','klap'
  * @typeParam useSharedSocket - attempt to reuse a shared socket if available, UDP only
  * @typeParam sharedSocketTimeout - (ms) how long to wait for another send before closing a shared socket. 0 = never automatically close socket
  */
 export type SendOptions = {
   timeout?: number;
-  transport?: 'tcp' | 'udp';
+  transport?: 'tcp' | 'udp' | 'klap';
   useSharedSocket?: boolean;
   sharedSocketTimeout?: number;
 };
@@ -296,12 +297,20 @@ class Client extends EventEmitter {
    * @internal
    */
   createConnection(
-    transport: 'tcp' | 'udp',
+    transport: 'tcp' | 'udp' | 'klap',
     host: string,
     port: number,
+    credentialOptions?: CredentialOptions,
   ): DeviceConnection {
     if (transport === 'udp') {
       return new UdpConnection(host, port, this.log, this);
+    }
+    if (transport === 'klap') {
+      return new KlapConnection(host, port, this.log, this, {
+        credentials: credentialOptions?.credentials ?? this.credentials,
+        credentialsHash:
+          credentialOptions?.credentialsHash ?? this.credentialsHash,
+      });
     }
     return new TcpConnection(host, port, this.log, this);
   }
@@ -332,7 +341,7 @@ class Client extends EventEmitter {
   async send(
     payload: Record<string, unknown> | string,
     host: string,
-    port = 9999,
+    port?: number,
     sendOptions?: SendOptions,
   ): Promise<string> {
     const thisSendOptions = {
@@ -341,14 +350,25 @@ class Client extends EventEmitter {
       useSharedSocket: false,
     };
 
+    const effectivePort =
+      port ?? (thisSendOptions.transport === 'klap' ? 80 : 9999);
+
     const payloadString = !(typeof payload === 'string')
       ? JSON.stringify(payload)
       : payload;
 
-    const connection = this.createConnection(thisSendOptions.transport, host, port);
+    const connection = this.createConnection(
+      thisSendOptions.transport,
+      host,
+      effectivePort,
+      {
+        credentials: this.credentials,
+        credentialsHash: this.credentialsHash,
+      },
+    );
     const response = await connection.send(
       payloadString,
-      port,
+      effectivePort,
       host,
       thisSendOptions,
     );

@@ -24,8 +24,9 @@ Many other TP-Link Plug and Bulb models may work as well. Note that Tapo devices
 
 - Child-scoped operations (`childId`) are supported for plug modules such as `away`, `schedule`, `timer`, `emeter`, and `dimmer`.
 - For child channels that expose brightness in child sysinfo (for example dimmer + fan combinations), dimmer capability is detected from child data when a `childId` is selected.
-- This project uses the legacy TP-Link Smart Home protocol (`IOT.*` on port `9999`) and does not implement the newer SMART/KLAP/AES authenticated protocol stack used by many newer Kasa/Tapo devices.
-- As a result, model names like `KS240` are not automatically equivalent to full device support in this library unless the device is reachable via the legacy protocol.
+- This project primarily targets the legacy TP-Link Smart Home protocol (`IOT.*` on port `9999`), and now includes an experimental `klap` transport for authenticated `/app/*` sessions (credential or `credentialsHash` based).
+- The `klap` transport currently enables low-level transport/session handling (`client.send` / `device.send`) but does not provide full SMART module parity or AES transport support yet.
+- As a result, model names like `KS240` are still not automatically equivalent to full high-level feature support in this library.
 
 ## Related Projects
 
@@ -61,7 +62,7 @@ Install the command line utility with `npm install -g tplink-smarthome-api`. Run
 
 [API docs can be found here.](https://plasticrake.github.io/tplink-smarthome-api/)
 
-For functions that send commands, the last argument is `SendOptions` where you can set the `transport` ('tcp','udp') and `timeout`, etc.
+For functions that send commands, the last argument is `SendOptions` where you can set the `transport` (`'tcp'`, `'udp'`, `'klap'`) and `timeout`, etc.
 
 Functions that take more than 3 arguments are passed a single options object as the first argument (and if its a network command, SendOptions as the second.)
 

@@ -145,7 +145,10 @@ abstract class Device extends EventEmitter {
 
   readonly credentialsHash?: string;
 
-  private readonly connections: Record<'udp' | 'tcp', DeviceConnection>;
+  private readonly connections: Record<
+    'udp' | 'tcp' | 'klap',
+    DeviceConnection
+  >;
 
   protected _sysInfo: Sysinfo;
 
@@ -166,7 +169,7 @@ abstract class Device extends EventEmitter {
       // eslint-disable-next-line @typescript-eslint/naming-convention
       _sysInfo,
       host,
-      port = 9999,
+      port,
       logger,
       defaultSendOptions,
       credentials,
@@ -185,7 +188,8 @@ abstract class Device extends EventEmitter {
     // eslint-disable-next-line no-underscore-dangle
     this._sysInfo = _sysInfo;
     this.host = host;
-    this.port = port;
+    this.port =
+      port ?? (client.defaultSendOptions.transport === 'klap' ? 80 : 9999);
 
     this.defaultSendOptions = {
       ...client.defaultSendOptions,
@@ -206,6 +210,10 @@ abstract class Device extends EventEmitter {
     this.connections = {
       udp: this.client.createConnection('udp', this.host, this.port),
       tcp: this.client.createConnection('tcp', this.host, this.port),
+      klap: this.client.createConnection('klap', this.host, this.port, {
+        credentials: this.credentials,
+        credentialsHash: this.credentialsHash,
+      }),
     };
   }
 
@@ -334,6 +342,7 @@ abstract class Device extends EventEmitter {
   closeConnection(): void {
     this.connections.udp.close();
     this.connections.tcp.close();
+    this.connections.klap.close();
   }
 
   /**
