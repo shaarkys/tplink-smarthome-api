@@ -167,6 +167,16 @@ export type SendOptions = {
   sharedSocketTimeout?: number;
 };
 
+export type SmartMethodRequest = {
+  method: string;
+  params?: Record<string, unknown> | null;
+};
+
+export type SmartRequestPayload = SmartMethodRequest & {
+  request_time_milis?: number;
+  terminal_uuid?: string;
+};
+
 export interface ClientEvents {
   /**
    * First response from device.
@@ -374,6 +384,35 @@ class Client extends EventEmitter {
     );
     connection.close();
     return response;
+  }
+
+  /**
+   * Sends a SMART payload to a KLAP transport device and returns parsed response.
+   *
+   * If `sendOptions.transport` is not specified it defaults to `klap`.
+   */
+  async sendSmart(
+    payload: SmartRequestPayload | string,
+    host: string,
+    port = 80,
+    sendOptions?: SendOptions,
+  ): Promise<Record<string, unknown>> {
+    const thisSendOptions = { ...sendOptions };
+    if (thisSendOptions.transport === undefined) {
+      thisSendOptions.transport = 'klap';
+    }
+
+    const responseString = await this.send(
+      payload,
+      host,
+      port,
+      thisSendOptions,
+    );
+    const responseObj: unknown = JSON.parse(responseString);
+    if (!isObjectLike(responseObj)) {
+      throw new TypeError(`Unexpected SMART response: ${responseString}`);
+    }
+    return responseObj;
   }
 
   /**

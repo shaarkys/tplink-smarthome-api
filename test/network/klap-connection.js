@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const http = require('http');
 
 const { default: Client } = require('../../src/client');
+const { SmartError } = require('../../src');
 
 const DEFAULT_TIMEOUT_SECONDS = 86400;
 const SESSION_COOKIE_NAME = 'TP_SESSIONID';
@@ -117,6 +118,7 @@ function createKlapTestServer({
   loginVariant = 'v2',
   timeoutSeconds = DEFAULT_TIMEOUT_SECONDS,
   forceFirstRequest403 = false,
+  requestHandler,
 } = {}) {
   const metrics = {
     handshake1Count: 0,
@@ -134,7 +136,7 @@ function createKlapTestServer({
       : authHashV2(username, password);
 
   let request403AlreadySent = false;
-  const responsePayload = '{"error_code":0,"result":{"ok":true}}';
+  const requests = [];
 
   const server = http.createServer(async (req, res) => {
     const body = await readBody(req);
@@ -221,8 +223,26 @@ function createKlapTestServer({
       }
 
       const session = activeSessions.get(sessionId);
-      decryptRequestPayload(session, seq, body);
+      const decryptedRequest = decryptRequestPayload(session, seq, body);
+      requests.push(decryptedRequest);
       metrics.requestCount += 1;
+
+      let responsePayload = '{"error_code":0,"result":{"ok":true}}';
+      if (typeof requestHandler === 'function') {
+        let parsedRequest;
+        try {
+          parsedRequest = JSON.parse(decryptedRequest);
+        } catch (err) {
+          parsedRequest = undefined;
+        }
+        const customResponse = requestHandler(parsedRequest, decryptedRequest);
+        if (customResponse !== undefined) {
+          responsePayload =
+            typeof customResponse === 'string'
+              ? customResponse
+              : JSON.stringify(customResponse);
+        }
+      }
 
       res.writeHead(200);
       res.end(encryptResponsePayload(session, seq, responsePayload));
@@ -244,7 +264,7 @@ function createKlapTestServer({
       server.close(() => resolve());
     });
 
-  return { metrics, start, stop };
+  return { metrics, start, stop, requests };
 }
 
 function createKlapPlug(client, host, port) {
@@ -429,6 +449,219 @@ describe('KlapConnection', function () {
     assert.strictEqual(server.metrics.handshake2Count, 0);
 
     device.closeConnection();
+    await server.stop();
+  });
+
+  it('supports SMART single-method requests via device.sendSmartCommand()', async function () {
+    const server = createKlapTestServer({
+      requestHandler(request) {
+        if (request && request.method === 'get_device_info') {
+          return { error_code: 0, result: { model: 'KS240', device_on: true } };
+        }
+        return { error_code: 0, result: {} };
+      },
+    });
+    const port = await server.start();
+    const client = new Client({
+      credentials: { username: 'user@example.com', password: 'secret' },
+    });
+    const device = createKlapPlug(client, '127.0.0.1', port);
+
+    const response = await device.sendSmartCommand('get_device_info');
+
+    assert.deepStrictEqual(response, { model: 'KS240', device_on: true });
+    assert.strictEqual(server.metrics.handshake1Count, 1);
+    assert.strictEqual(server.metrics.requestCount, 1);
+
+    device.closeConnection();
+    await server.stop();
+  });
+
+  it('supports SMART multipleRequest via device.sendSmartRequests()', async function () {
+    const server = createKlapTestServer({
+      requestHandler(request) {
+        if (
+          request &&
+          request.method === 'multipleRequest' &&
+          request.params &&
+          Array.isArray(request.params.requests)
+        ) {
+          return {
+            error_code: 0,
+            result: {
+              responses: request.params.requests.map((entry) => ({
+                method: entry.method,
+                error_code: 0,
+                result: { echoed_method: entry.method },
+              })),
+            },
+          };
+        }
+        return { error_code: 0, result: {} };
+      },
+    });
+    const port = await server.start();
+    const client = new Client({
+      credentials: { username: 'user@example.com', password: 'secret' },
+    });
+    const device = createKlapPlug(client, '127.0.0.1', port);
+
+    const response = await device.sendSmartRequests([
+      { method: 'get_device_info' },
+      { method: 'get_device_time' },
+    ]);
+
+    assert.deepStrictEqual(response, {
+      get_device_info: { echoed_method: 'get_device_info' },
+      get_device_time: { echoed_method: 'get_device_time' },
+    });
+
+    device.closeConnection();
+    await server.stop();
+  });
+
+  it('wraps SMART child-scoped requests in control_child envelope', async function () {
+    const server = createKlapTestServer({
+      requestHandler(request) {
+        if (request && request.method === 'control_child') {
+          return {
+            error_code: 0,
+            result: {
+              responseData: {
+                error_code: 0,
+                result: { applied: true },
+              },
+            },
+          };
+        }
+        return { error_code: 0, result: {} };
+      },
+    });
+    const port = await server.start();
+    const client = new Client({
+      credentials: { username: 'user@example.com', password: 'secret' },
+    });
+    const device = createKlapPlug(client, '127.0.0.1', port);
+
+    const response = await device.sendSmartCommand(
+      'set_device_info',
+      { brightness: 50 },
+      '00',
+    );
+
+    assert.deepStrictEqual(response, { applied: true });
+    const lastRequest = JSON.parse(server.requests[server.requests.length - 1]);
+    assert.strictEqual(lastRequest.method, 'control_child');
+    assert.strictEqual(
+      lastRequest.params.device_id,
+      `${createPlugSysInfo().deviceId}00`,
+    );
+    assert.strictEqual(
+      lastRequest.params.requestData.method,
+      'set_device_info',
+    );
+
+    device.closeConnection();
+    await server.stop();
+  });
+
+  it('raises SmartError for non-zero SMART top-level error codes', async function () {
+    const server = createKlapTestServer({
+      requestHandler() {
+        return { error_code: -1008, result: null };
+      },
+    });
+    const port = await server.start();
+    const client = new Client({
+      credentials: { username: 'user@example.com', password: 'secret' },
+    });
+    const device = createKlapPlug(client, '127.0.0.1', port);
+
+    await assert.rejects(
+      async () => {
+        await device.sendSmartCommand('get_device_info');
+      },
+      (error) => {
+        assert.ok(error instanceof SmartError);
+        assert.strictEqual(error.errorCode, -1008);
+        assert.strictEqual(error.method, 'get_device_info');
+        return true;
+      },
+    );
+
+    device.closeConnection();
+    await server.stop();
+  });
+
+  it('raises SmartError for non-zero SMART multi-response entries', async function () {
+    const server = createKlapTestServer({
+      requestHandler(request) {
+        if (request && request.method === 'multipleRequest') {
+          return {
+            error_code: 0,
+            result: {
+              responses: [
+                { method: 'get_device_info', error_code: 0, result: {} },
+                { method: 'get_device_time', error_code: -1001 },
+              ],
+            },
+          };
+        }
+        return { error_code: 0, result: {} };
+      },
+    });
+    const port = await server.start();
+    const client = new Client({
+      credentials: { username: 'user@example.com', password: 'secret' },
+    });
+    const device = createKlapPlug(client, '127.0.0.1', port);
+
+    await assert.rejects(
+      async () => {
+        await device.sendSmartRequests([
+          { method: 'get_device_info' },
+          { method: 'get_device_time' },
+        ]);
+      },
+      (error) => {
+        assert.ok(error instanceof SmartError);
+        assert.strictEqual(error.errorCode, -1001);
+        assert.strictEqual(error.method, 'get_device_time');
+        return true;
+      },
+    );
+
+    device.closeConnection();
+    await server.stop();
+  });
+
+  it('supports SMART client.sendSmart() with default klap transport', async function () {
+    const server = createKlapTestServer({
+      requestHandler(request) {
+        if (request && request.method === 'get_device_info') {
+          return { error_code: 0, result: { via: 'client.sendSmart' } };
+        }
+        return { error_code: 0, result: {} };
+      },
+    });
+    const port = await server.start();
+    const client = new Client({
+      credentials: { username: 'user@example.com', password: 'secret' },
+      defaultSendOptions: { transport: 'tcp' },
+    });
+
+    const response = await client.sendSmart(
+      { method: 'get_device_info' },
+      '127.0.0.1',
+      port,
+    );
+
+    assert.deepStrictEqual(response, {
+      error_code: 0,
+      result: { via: 'client.sendSmart' },
+    });
+    assert.strictEqual(server.metrics.handshake1Count, 1);
+
     await server.stop();
   });
 });

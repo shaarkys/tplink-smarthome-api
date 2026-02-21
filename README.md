@@ -26,6 +26,7 @@ Many other TP-Link Plug and Bulb models may work as well. Note that Tapo devices
 - For child channels that expose brightness in child sysinfo (for example dimmer + fan combinations), dimmer capability is detected from child data when a `childId` is selected.
 - This project primarily targets the legacy TP-Link Smart Home protocol (`IOT.*` on port `9999`), and now includes an experimental `klap` transport for authenticated `/app/*` sessions (credential or `credentialsHash` based).
 - The `klap` transport currently enables low-level transport/session handling (`client.send` / `device.send`) but does not provide full SMART module parity or AES transport support yet.
+- For SMART requests over KLAP, use `client.sendSmart(...)`, `device.sendSmartCommand(...)`, and `device.sendSmartRequests(...)` (including child-scoped `control_child` wrapping).
 - As a result, model names like `KS240` are still not automatically equivalent to full high-level feature support in this library.
 
 ## Related Projects
@@ -65,6 +66,21 @@ Install the command line utility with `npm install -g tplink-smarthome-api`. Run
 For functions that send commands, the last argument is `SendOptions` where you can set the `transport` (`'tcp'`, `'udp'`, `'klap'`) and `timeout`, etc.
 
 Functions that take more than 3 arguments are passed a single options object as the first argument (and if its a network command, SendOptions as the second.)
+
+Example SMART over KLAP:
+
+```javascript
+const client = new Client({
+  credentials: { username: 'user@example.com', password: 'secret' },
+});
+
+const device = client.getPlug({ host: '10.0.1.2', sysInfo });
+const info = await device.sendSmartCommand('get_device_info');
+const multi = await device.sendSmartRequests([
+  { method: 'get_device_info' },
+  { method: 'get_device_time' },
+]);
+```
 
 ## Credits
 

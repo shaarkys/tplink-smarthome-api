@@ -28,6 +28,8 @@ export {
   type DiscoveryDevice,
   type DiscoveryOptions,
   type SendOptions,
+  type SmartMethodRequest,
+  type SmartRequestPayload,
 } from './client';
 
 export {
@@ -36,6 +38,7 @@ export {
   type CommonSysinfo,
   type DeviceConstructorOptions,
   type DeviceEvents,
+  type SmartMethodResponseMap,
   type Sysinfo,
 } from './device';
 export type { default as Netif } from './device/netif';
@@ -87,4 +90,5 @@ export type { default as Time } from './shared/time';
 export type { LogLevelMethodNames, Logger } from './logger';
 export type { CredentialOptions, Credentials } from './credentials';
 
+export { default as SmartError } from './smart-error';
 export { ResponseError, type HasErrCode } from './utils';
