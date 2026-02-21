@@ -20,6 +20,13 @@ TP-Link Smarthome API
 
 Many other TP-Link Plug and Bulb models may work as well. Note that Tapo devices are not supported.
 
+### Notes on Child Devices and Protocol Support
+
+- Child-scoped operations (`childId`) are supported for plug modules such as `away`, `schedule`, `timer`, `emeter`, and `dimmer`.
+- For child channels that expose brightness in child sysinfo (for example dimmer + fan combinations), dimmer capability is detected from child data when a `childId` is selected.
+- This project uses the legacy TP-Link Smart Home protocol (`IOT.*` on port `9999`) and does not implement the newer SMART/KLAP/AES authenticated protocol stack used by many newer Kasa/Tapo devices.
+- As a result, model names like `KS240` are not automatically equivalent to full device support in this library unless the device is reachable via the legacy protocol.
+
 ## Related Projects
 
 - [TP-Link Smarthome Device Simulator](https://github.com/plasticrake/tplink-smarthome-simulator) - Useful for automated testing

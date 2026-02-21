@@ -24,7 +24,7 @@ export interface DimmerActionInput {
 /**
  * Dimmer
  *
- * TP-Link models: HS220.
+ * TP-Link models: HS220 and child-dimmer channels exposed on some multi-channel switches.
  */
 export default class Dimmer {
   /**
@@ -40,6 +40,7 @@ export default class Dimmer {
   constructor(
     readonly device: Plug,
     readonly apiModuleName: string,
+    readonly childId: string | undefined = undefined,
   ) {}
 
   /**
@@ -61,7 +62,7 @@ export default class Dimmer {
   /**
    * Sets Plug to the specified `brightness`.
    *
-   * Sends `dimmer.set_brightness` command. Does not support childId.
+   * Sends `dimmer.set_brightness` command. Supports childId when configured on `Plug`.
    * @param   brightness - 0-100
    * @returns parsed JSON response
    * @throws {@link ResponseError}
@@ -76,7 +77,7 @@ export default class Dimmer {
           set_brightness: { brightness },
         },
       },
-      undefined,
+      this.childId,
       sendOptions,
     );
 
@@ -88,7 +89,7 @@ export default class Dimmer {
   /**
    * Get Plug/Dimmer default behavior configuration.
    *
-   * Requests `dimmer.get_default_behavior`. Does not support childId.
+   * Requests `dimmer.get_default_behavior`. Supports childId when configured on `Plug`.
    * @returns parsed JSON response
    * @throws {@link ResponseError}
    */
@@ -99,7 +100,7 @@ export default class Dimmer {
           get_default_behavior: {},
         },
       },
-      undefined,
+      this.childId,
       sendOptions,
     );
   }
@@ -107,7 +108,7 @@ export default class Dimmer {
   /**
    * Get Plug/Dimmer parameters configuration.
    *
-   * Requests `dimmer.get_dimmer_parameters`. Does not support childId.
+   * Requests `dimmer.get_dimmer_parameters`. Supports childId when configured on `Plug`.
    * @returns parsed JSON response
    * @throws {@link ResponseError}
    */
@@ -118,7 +119,7 @@ export default class Dimmer {
           get_dimmer_parameters: {},
         },
       },
-      undefined,
+      this.childId,
       sendOptions,
     );
   }
@@ -126,7 +127,7 @@ export default class Dimmer {
   /**
    * Transitions Plug to the specified `brightness`.
    *
-   * Sends `dimmer.set_dimmer_transition` command. Does not support childId.
+   * Sends `dimmer.set_dimmer_transition` command. Supports childId when configured on `Plug`.
    * @returns parsed JSON response
    * @throws {@link ResponseError}
    */
@@ -146,7 +147,7 @@ export default class Dimmer {
           },
         },
       },
-      undefined,
+      this.childId,
       sendOptions,
     );
 
@@ -158,7 +159,7 @@ export default class Dimmer {
   /**
    * Set Plug/Dimmer `default_behavior` configuration for `double_click`.
    *
-   * Sends `dimmer.set_double_click_action`. Does not support childId.
+   * Sends `dimmer.set_double_click_action`. Supports childId when configured on `Plug`.
    * @returns parsed JSON response
    * @throws {@link ResponseError}
    */
@@ -194,7 +195,7 @@ export default class Dimmer {
           [actionName]: { mode, index },
         },
       },
-      undefined,
+      this.childId,
       sendOptions,
     );
   }
@@ -202,7 +203,7 @@ export default class Dimmer {
   /**
    * Set Plug `dimmer_parameters` for `fadeOffTime`.
    *
-   * Sends `dimmer.set_fade_off_time`. Does not support childId.
+   * Sends `dimmer.set_fade_off_time`. Supports childId when configured on `Plug`.
    * @param   fadeTime - duration in ms
    * @param   sendOptions
    * @returns parsed JSON response
@@ -218,7 +219,7 @@ export default class Dimmer {
           set_fade_off_time: { fadeTime },
         },
       },
-      undefined,
+      this.childId,
       sendOptions,
     );
   }
@@ -226,7 +227,7 @@ export default class Dimmer {
   /**
    * Set Plug `dimmer_parameters` for `fadeOnTime`.
    *
-   * Sends `dimmer.set_fade_on_time`. Does not support childId.
+   * Sends `dimmer.set_fade_on_time`. Supports childId when configured on `Plug`.
    * @param   fadeTime - duration in ms
    * @param   sendOptions
    * @returns parsed JSON response
@@ -242,7 +243,7 @@ export default class Dimmer {
           set_fade_on_time: { fadeTime },
         },
       },
-      undefined,
+      this.childId,
       sendOptions,
     );
   }
@@ -250,7 +251,7 @@ export default class Dimmer {
   /**
    * Set Plug `dimmer_parameters` for `gentleOffTime`.
    *
-   * Sends `dimmer.set_gentle_off_time`. Does not support childId.
+   * Sends `dimmer.set_gentle_off_time`. Supports childId when configured on `Plug`.
    * @param   duration - duration in ms
    * @param   sendOptions
    * @returns parsed JSON response
@@ -266,7 +267,7 @@ export default class Dimmer {
           set_gentle_off_time: { duration },
         },
       },
-      undefined,
+      this.childId,
       sendOptions,
     );
   }
@@ -274,7 +275,7 @@ export default class Dimmer {
   /**
    * Set Plug `dimmer_parameters` for `gentleOnTime`.
    *
-   * Sends `dimmer.set_gentle_on_time`. Does not support childId.
+   * Sends `dimmer.set_gentle_on_time`. Supports childId when configured on `Plug`.
    * @param   duration - duration in ms
    * @param   sendOptions
    * @returns parsed JSON response
@@ -290,7 +291,7 @@ export default class Dimmer {
           set_gentle_on_time: { duration },
         },
       },
-      undefined,
+      this.childId,
       sendOptions,
     );
   }
@@ -298,7 +299,7 @@ export default class Dimmer {
   /**
    * Set Plug/Dimmer `default_behavior` configuration for `long_press`.
    *
-   * Sends `dimmer.set_long_press_action`. Does not support childId.
+   * Sends `dimmer.set_long_press_action`. Supports childId when configured on `Plug`.
    * @param   options
    * @param   options.mode
    * @param   options.index
@@ -319,7 +320,7 @@ export default class Dimmer {
   /**
    * Sets Plug to the specified on/off state.
    *
-   * Sends `dimmer.set_switch_state` command. Does not support childId.
+   * Sends `dimmer.set_switch_state` command. Supports childId when configured on `Plug`.
    * @param  {Boolean}     state  true=on, false=off
    * @param  {SendOptions} [sendOptions]
    * @returns parsed JSON response
@@ -335,7 +336,7 @@ export default class Dimmer {
           set_switch_state: { state: state ? 1 : 0 },
         },
       },
-      undefined,
+      this.childId,
       sendOptions,
     );
   }

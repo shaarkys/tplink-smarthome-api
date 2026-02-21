@@ -51,6 +51,68 @@ describe('Client', function () {
     });
   });
 
+  describe('KS240-style child wiring', function () {
+    const ks240SysInfo = {
+      alias: 'KS240',
+      deviceId: 'ks240-device-id',
+      model: 'KS240(US)',
+      sw_ver: '1.0.0',
+      hw_ver: '1.0',
+      type: 'IOT.SMARTPLUGSWITCH',
+      mac: '00:11:22:33:44:55',
+      feature: 'TIM',
+      relay_state: 0,
+      led_off: 0,
+      children: [
+        {
+          id: '00',
+          alias: 'Light',
+          state: 0,
+          category: 'kasa.switch.outlet.sub-dimmer',
+          brightness: 75,
+        },
+        {
+          id: '01',
+          alias: 'Fan',
+          state: 0,
+          category: 'kasa.switch.outlet.sub-fan',
+        },
+      ],
+    };
+
+    it('should scope child modules to childId and detect child dimmer capability', async function () {
+      const client = new Client();
+      const lightChild = client.getPlug({
+        host: '127.0.0.1',
+        sysInfo: ks240SysInfo,
+        childId: '00',
+      });
+      const fanChild = client.getPlug({
+        host: '127.0.0.1',
+        sysInfo: ks240SysInfo,
+        childId: '01',
+      });
+
+      expect(lightChild.away.childId).to.eql('00');
+      expect(lightChild.emeter.childId).to.eql('00');
+      expect(lightChild.schedule.childId).to.eql('00');
+      expect(lightChild.timer.childId).to.eql('00');
+      expect(lightChild.dimmer.childId).to.eql('00');
+
+      expect(lightChild.supportsDimmer).to.be.true;
+      expect(fanChild.supportsDimmer).to.be.false;
+
+      const sendCommand = sinon
+        .stub(lightChild, 'sendCommand')
+        .resolves({ err_code: 0 });
+      await lightChild.dimmer.setBrightness(42);
+      expect(sendCommand).to.have.been.calledWithMatch(
+        { 'smartlife.iot.dimmer': { set_brightness: { brightness: 42 } } },
+        '00',
+      );
+    });
+  });
+
   describe('#startDiscovery()', function () {
     this.retries(1);
     this.timeout(config.defaultTestTimeout * 2);

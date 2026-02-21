@@ -22,10 +22,17 @@ import Dimmer from './dimmer';
 import Schedule from './schedule';
 import Timer from './timer';
 
-export type PlugChild = { id: string; alias: string; state: number };
+export type PlugChild = {
+  id: string;
+  alias: string;
+  state: number;
+  category?: string;
+  model?: string;
+  brightness?: number;
+};
 
 export type SysinfoChildren = {
-  children?: [{ id: string; alias: string; state: number }];
+  children?: PlugChild[];
 };
 
 export type PlugSysinfo = CommonSysinfo &
@@ -202,7 +209,7 @@ class Plug extends Device {
      * @borrows Away#deleteRule as Plug.away#deleteRule
      * @borrows Away#setOverallEnable as Plug.away#setOverallEnable
      */
-    this.away = new Away(this, 'anti_theft', this.#childId);
+    this.away = new Away(this, 'anti_theft', childId);
 
     /**
      * @borrows Cloud#getInfo as Plug.cloud#getInfo
@@ -226,7 +233,7 @@ class Plug extends Device {
      * @borrows Dimmer#setLongPressAction as Plug.dimmer#setLongPressAction
      * @borrows Dimmer#setSwitchState as Plug.dimmer#setSwitchState
      */
-    this.dimmer = new Dimmer(this, 'smartlife.iot.dimmer');
+    this.dimmer = new Dimmer(this, 'smartlife.iot.dimmer', childId);
 
     /**
      * @borrows Emeter#realtime as Plug.emeter#realtime
@@ -235,7 +242,7 @@ class Plug extends Device {
      * @borrows Emeter#getMonthStats as Plug.emeter#getMonthStats
      * @borrows Emeter#eraseStats as Plug.emeter#eraseStats
      */
-    this.emeter = new Emeter(this, 'emeter', this.#childId);
+    this.emeter = new Emeter(this, 'emeter', childId);
 
     /**
      * @borrows Schedule#getNextAction as Plug.schedule#getNextAction
@@ -250,7 +257,7 @@ class Plug extends Device {
      * @borrows Schedule#getMonthStats as Plug.schedule#getMonthStats
      * @borrows Schedule#eraseStats as Plug.schedule#eraseStats
      */
-    this.schedule = new Schedule(this, 'schedule', this.#childId);
+    this.schedule = new Schedule(this, 'schedule', childId);
 
     /**
      * @borrows Time#getTime as Plug.time#getTime
@@ -264,7 +271,7 @@ class Plug extends Device {
      * @borrows Timer#editRule as Plug.timer#editRule
      * @borrows Timer#deleteAllRules as Plug.timer#deleteAllRules
      */
-    this.timer = new Timer(this, 'count_down', this.#childId);
+    this.timer = new Timer(this, 'count_down', childId);
 
     this._sysInfo = sysInfo;
     this.setSysInfo(sysInfo);
@@ -289,8 +296,9 @@ class Plug extends Device {
     if (sysInfo.children) {
       this.setChildren(sysInfo.children);
     }
-    if (sysInfo.brightness !== undefined) {
-      this.dimmer.setBrightnessValue(sysInfo.brightness);
+    const brightness = this.getBrightnessValue();
+    if (brightness !== undefined) {
+      this.dimmer.setBrightnessValue(brightness);
     }
     this.log.debug('[%s] plug sysInfo set', this.alias);
     this.emitEvents();
@@ -334,6 +342,17 @@ class Plug extends Device {
     if (this.#childId && this.#child == null) {
       throw new Error(`Could not find child with childId ${childId}`);
     }
+    const brightness = this.getBrightnessValue();
+    if (brightness !== undefined) {
+      this.dimmer.setBrightnessValue(brightness);
+    }
+  }
+
+  private getBrightnessValue(): number | undefined {
+    if (this.#childId && this.#child?.brightness !== undefined) {
+      return this.#child.brightness;
+    }
+    return this.sysInfo.brightness;
   }
 
   /**
@@ -434,7 +453,7 @@ class Plug extends Device {
    * @returns `true` if cached value of `sysinfo` has `brightness` property.
    */
   get supportsDimmer(): boolean {
-    return 'brightness' in this.sysInfo;
+    return this.getBrightnessValue() !== undefined;
   }
 
   /**
