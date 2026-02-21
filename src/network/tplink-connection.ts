@@ -3,13 +3,17 @@ import Queue from 'promise-queue';
 
 import type Client from '../client';
 import type { Logger } from '../logger';
+import type { DeviceConnection } from './connection';
 import TcpSocket from './tcp-socket';
 import UdpSocket from './udp-socket';
 
 /**
  * @hidden
  */
-export default abstract class TplinkConnection extends EventEmitter {
+export default abstract class TplinkConnection
+  extends EventEmitter
+  implements DeviceConnection
+{
   abstract readonly socketType: string;
 
   // TODO: Move queue to device, so UDP and TCP connections share a queue

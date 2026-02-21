@@ -195,6 +195,8 @@ class Plug extends Device {
       port: options.port,
       logger: options.logger,
       defaultSendOptions: options.defaultSendOptions,
+      credentials: options.credentials,
+      credentialsHash: options.credentialsHash,
     });
 
     const { sysInfo, inUseThreshold = 0.1, childId } = options;

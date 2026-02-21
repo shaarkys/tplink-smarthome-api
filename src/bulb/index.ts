@@ -254,6 +254,8 @@ class Bulb extends Device {
       port: options.port,
       logger: options.logger,
       defaultSendOptions: options.defaultSendOptions,
+      credentials: options.credentials,
+      credentialsHash: options.credentialsHash,
     });
 
     this.lastState = Object.assign(this.lastState, {
