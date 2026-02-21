@@ -1,9 +1,15 @@
+import { randomBytes } from 'crypto';
 import { EventEmitter } from 'events';
 import castArray from 'lodash.castarray';
 import type log from 'loglevel';
 
 import type { BulbSysinfo } from '../bulb';
-import type { default as Client, SendOptions } from '../client'; // eslint-disable-line import/no-named-default
+import type Client from '../client';
+import type {
+  SendOptions,
+  SmartMethodRequest,
+  SmartRequestPayload,
+} from '../client';
 import {
   type CredentialOptions,
   type Credentials,
@@ -14,6 +20,7 @@ import type { Logger } from '../logger';
 import type { DeviceConnection } from '../network/connection';
 import type { PlugSysinfo } from '../plug';
 import type { RealtimeNormalized } from '../shared/emeter';
+import SmartError from '../smart-error';
 import {
   extractResponse,
   isObjectLike,
@@ -27,6 +34,11 @@ type HasAtLeastOneProperty = {
   [key: string]: unknown;
 };
 
+type SmartResponse = {
+  error_code: number;
+  result?: unknown;
+};
+
 export interface ApiModuleNamespace {
   system: string;
   cloud: string;
@@ -38,6 +50,7 @@ export interface ApiModuleNamespace {
 }
 
 export type Sysinfo = BulbSysinfo | PlugSysinfo;
+export type SmartMethodResponseMap = Record<string, unknown>;
 
 export interface DeviceConstructorOptions extends CredentialOptions {
   client: Client;
@@ -103,6 +116,10 @@ function isSysinfo(candidate: unknown): candidate is Sysinfo {
   return isPlugSysinfo(candidate) || isBulbSysinfo(candidate);
 }
 
+function isSmartResponse(candidate: unknown): candidate is SmartResponse {
+  return isObjectLike(candidate) && typeof candidate.error_code === 'number';
+}
+
 export interface DeviceEvents {
   /**
    * Energy Monitoring Details were updated from device. Fired regardless if status was changed.
@@ -144,6 +161,8 @@ abstract class Device extends EventEmitter {
   readonly credentials?: Credentials;
 
   readonly credentialsHash?: string;
+
+  private readonly smartTerminalUuid = randomBytes(16).toString('base64');
 
   private readonly connections: Record<
     'udp' | 'tcp' | 'klap',
@@ -466,6 +485,201 @@ abstract class Device extends EventEmitter {
       JSON.parse(response) as unknown,
     );
     return results;
+  }
+
+  /**
+   * Sends a SMART method request to device.
+   *
+   * - Requests are sent through KLAP transport by default.
+   * - If `childIds` is specified, the request is wrapped in SMART `control_child`.
+   */
+  async sendSmartCommand(
+    method: string,
+    params?: Record<string, unknown> | null,
+    childIds: string[] | string | undefined = this.childId,
+    sendOptions?: SendOptions,
+  ): Promise<unknown> {
+    const smartSendOptions = { ...sendOptions };
+    if (smartSendOptions.transport === undefined) {
+      smartSendOptions.transport = 'klap';
+    }
+
+    const childId = this.getSingleSmartChildId(childIds);
+    const request = this.createSmartRequestPayload({ method, params });
+    const requestToSend =
+      childId !== undefined
+        ? this.createSmartRequestPayload({
+            method: 'control_child',
+            params: {
+              device_id: childId,
+              requestData: {
+                method: request.method,
+                ...(request.params !== undefined
+                  ? { params: request.params }
+                  : {}),
+              },
+            },
+          })
+        : request;
+
+    const responseString = await this.send(requestToSend, smartSendOptions);
+    let responseObj: unknown;
+    try {
+      responseObj = JSON.parse(responseString);
+    } catch {
+      throw new Error(`Could not parse SMART response: ${responseString}`);
+    }
+
+    if (childId !== undefined) {
+      Device.assertSmartSuccess(responseObj, 'control_child', requestToSend);
+      if (
+        !isObjectLike(responseObj) ||
+        !('result' in responseObj) ||
+        !isObjectLike(responseObj.result) ||
+        !('responseData' in responseObj.result)
+      ) {
+        throw new Error(
+          `Unexpected SMART control_child response: ${responseString}`,
+        );
+      }
+      return Device.processSmartResponse(
+        responseObj.result.responseData,
+        method,
+        requestToSend,
+      );
+    }
+
+    return Device.processSmartResponse(responseObj, method, requestToSend);
+  }
+
+  /**
+   * Sends a SMART `multipleRequest` and returns a map keyed by SMART method.
+   */
+  async sendSmartRequests(
+    requests: SmartMethodRequest[],
+    childIds: string[] | string | undefined = this.childId,
+    sendOptions?: SendOptions,
+  ): Promise<SmartMethodResponseMap> {
+    if (requests.length === 0) {
+      return {};
+    }
+
+    const response = await this.sendSmartCommand(
+      'multipleRequest',
+      {
+        requests: requests.map((request) => ({
+          method: request.method,
+          ...(request.params !== undefined ? { params: request.params } : {}),
+        })),
+      },
+      childIds,
+      sendOptions,
+    );
+
+    if (!isObjectLike(response)) {
+      throw new Error(
+        `Unexpected SMART multipleRequest response: ${JSON.stringify(
+          response,
+        )}`,
+      );
+    }
+    return response as SmartMethodResponseMap;
+  }
+
+  private createSmartRequestPayload(
+    request: SmartMethodRequest,
+  ): SmartRequestPayload {
+    return {
+      method: request.method,
+      ...(request.params !== undefined ? { params: request.params } : {}),
+      request_time_milis: Date.now(),
+      terminal_uuid: this.smartTerminalUuid,
+    };
+  }
+
+  private getSingleSmartChildId(
+    childIds: string[] | string | undefined,
+  ): string | undefined {
+    if (childIds === undefined) {
+      return undefined;
+    }
+    const childIdArray = castArray(childIds).map((childId) =>
+      this.normalizeChildId(childId),
+    );
+    if (childIdArray.length > 1) {
+      throw new Error('SMART control_child supports a single child id');
+    }
+    return childIdArray[0];
+  }
+
+  private static assertSmartSuccess(
+    response: unknown,
+    method: string,
+    request: SmartRequestPayload,
+  ): SmartResponse {
+    if (!isSmartResponse(response)) {
+      throw new Error(`Unexpected SMART response: ${JSON.stringify(response)}`);
+    }
+    if (response.error_code !== 0) {
+      throw new SmartError(
+        `SMART request failed`,
+        response.error_code,
+        method,
+        JSON.stringify(response),
+        JSON.stringify(request),
+      );
+    }
+    return response;
+  }
+
+  private static processSmartResponse(
+    response: unknown,
+    method: string,
+    request: SmartRequestPayload,
+  ): unknown {
+    const smartResponse = Device.assertSmartSuccess(response, method, request);
+
+    if (method !== 'multipleRequest') {
+      return smartResponse.result;
+    }
+
+    if (
+      !isObjectLike(smartResponse.result) ||
+      !('responses' in smartResponse.result) ||
+      !Array.isArray(smartResponse.result.responses)
+    ) {
+      throw new Error(
+        `Unexpected SMART multipleRequest response: ${JSON.stringify(
+          smartResponse,
+        )}`,
+      );
+    }
+
+    const multiResults: SmartMethodResponseMap = {};
+    smartResponse.result.responses.forEach((responseEntry: unknown) => {
+      if (
+        !isObjectLike(responseEntry) ||
+        typeof responseEntry.method !== 'string' ||
+        typeof responseEntry.error_code !== 'number'
+      ) {
+        throw new Error(
+          `Unexpected SMART response entry: ${JSON.stringify(responseEntry)}`,
+        );
+      }
+      if (responseEntry.error_code !== 0) {
+        throw new SmartError(
+          `SMART request failed`,
+          responseEntry.error_code,
+          responseEntry.method,
+          JSON.stringify(responseEntry),
+          JSON.stringify(request),
+        );
+      }
+
+      multiResults[responseEntry.method] =
+        'result' in responseEntry ? responseEntry.result : undefined;
+    });
+    return multiResults;
   }
 
   protected normalizeChildId(childId: string): string {
