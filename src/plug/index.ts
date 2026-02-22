@@ -19,7 +19,12 @@ import {
 } from '../utils';
 import Away from './away';
 import Dimmer from './dimmer';
+import Fan from './fan';
+import LightPreset from './light-preset';
+import LightTransition from './light-transition';
+import OverheatProtection from './overheat-protection';
 import Schedule from './schedule';
+import SmartLed from './smart-led';
 import Timer from './timer';
 
 export type PlugChild = {
@@ -29,6 +34,10 @@ export type PlugChild = {
   category?: string;
   model?: string;
   brightness?: number;
+  fan_speed_level?: number;
+  fan_sleep_mode_on?: boolean;
+  overheat_status?: string;
+  overheated?: boolean;
 };
 
 export type SysinfoChildren = {
@@ -38,15 +47,27 @@ export type SysinfoChildren = {
 export type PlugSysinfo = CommonSysinfo &
   SysinfoChildren &
   (
-    | { type: 'IOT.SMARTPLUGSWITCH' | 'IOT.RANGEEXTENDER.SMARTPLUG' }
+    | {
+        type:
+          | 'IOT.SMARTPLUGSWITCH'
+          | 'IOT.RANGEEXTENDER.SMARTPLUG'
+          | 'SMART.KASASWITCH'
+          | 'SMART.TAPOSWITCH';
+      }
     | { mic_type: 'IOT.SMARTPLUGSWITCH' }
   ) &
   ({ mac: string } | { ethernet_mac: string }) & {
-    feature: string;
-    led_off: 0 | 1;
+    feature?: string;
+    led_off?: 0 | 1;
     relay_state?: 0 | 1;
+    device_on?: boolean;
     dev_name?: string;
     brightness?: number;
+    fan_speed_level?: number;
+    fan_sleep_mode_on?: boolean;
+    overheat_status?: string;
+    overheated?: boolean;
+    components?: string[];
   };
 
 export function hasSysinfoChildren(
@@ -174,9 +195,19 @@ class Plug extends Device {
 
   dimmer: Dimmer;
 
+  fan: Fan;
+
+  lightPreset: LightPreset;
+
+  lightTransition: LightTransition;
+
+  overheatProtection: OverheatProtection;
+
   emeter: Emeter;
 
   schedule: Schedule;
+
+  smartLed: SmartLed;
 
   time: Time;
 
@@ -237,6 +268,14 @@ class Plug extends Device {
      */
     this.dimmer = new Dimmer(this, 'smartlife.iot.dimmer', childId);
 
+    this.fan = new Fan(this, childId);
+
+    this.lightPreset = new LightPreset(this, childId);
+
+    this.lightTransition = new LightTransition(this, childId);
+
+    this.overheatProtection = new OverheatProtection(this, childId);
+
     /**
      * @borrows Emeter#realtime as Plug.emeter#realtime
      * @borrows Emeter#getRealtime as Plug.emeter#getRealtime
@@ -274,6 +313,8 @@ class Plug extends Device {
      * @borrows Timer#deleteAllRules as Plug.timer#deleteAllRules
      */
     this.timer = new Timer(this, 'count_down', childId);
+
+    this.smartLed = new SmartLed(this, childId);
 
     this._sysInfo = sysInfo;
     this.setSysInfo(sysInfo);
@@ -357,6 +398,64 @@ class Plug extends Device {
     return this.sysInfo.brightness;
   }
 
+  private getFanSpeedLevelValue(): number | undefined {
+    if (this.#childId && this.#child?.fan_speed_level !== undefined) {
+      return this.#child.fan_speed_level;
+    }
+    return this.sysInfo.fan_speed_level;
+  }
+
+  private getFanSleepModeOnValue(): boolean | undefined {
+    if (this.#childId && this.#child?.fan_sleep_mode_on !== undefined) {
+      return this.#child.fan_sleep_mode_on;
+    }
+    return this.sysInfo.fan_sleep_mode_on;
+  }
+
+  private getOverheatedValue(): boolean | undefined {
+    const overheatStatus =
+      this.#childId && this.#child !== undefined
+        ? this.#child.overheat_status
+        : this.sysInfo.overheat_status;
+
+    if (typeof overheatStatus === 'string') {
+      return overheatStatus !== 'normal';
+    }
+
+    const overheated =
+      this.#childId && this.#child !== undefined
+        ? this.#child.overheated
+        : this.sysInfo.overheated;
+
+    if (typeof overheated === 'boolean') {
+      return overheated;
+    }
+    return undefined;
+  }
+
+  private getSysInfoTypeValue(): string | undefined {
+    const typeValue = 'type' in this.sysInfo ? this.sysInfo.type : undefined;
+    if (typeof typeValue === 'string') return typeValue;
+
+    const micTypeValue =
+      'mic_type' in this.sysInfo ? this.sysInfo.mic_type : undefined;
+    return typeof micTypeValue === 'string' ? micTypeValue : undefined;
+  }
+
+  private isSmartProtocolSwitch(): boolean {
+    const typeValue = this.getSysInfoTypeValue();
+    return typeof typeValue === 'string' && typeValue.startsWith('SMART.');
+  }
+
+  private hasSmartComponent(component: string): boolean {
+    const { components } = this.sysInfo;
+    return Array.isArray(components) ? components.includes(component) : false;
+  }
+
+  private isFanChild(): boolean {
+    return this.#child?.category === 'kasa.switch.outlet.sub-fan';
+  }
+
   /**
    * Cached value of `sysinfo.alias` or `sysinfo.children[childId].alias` if childId set.
    */
@@ -433,6 +532,9 @@ class Plug extends Device {
         }) !== -1
       );
     }
+    if (typeof this.sysInfo.device_on === 'boolean') {
+      return this.sysInfo.device_on;
+    }
     return this.sysInfo.relay_state === 1;
   }
 
@@ -447,6 +549,7 @@ class Plug extends Device {
       }
       return;
     }
+    this.sysInfo.device_on = relayState;
     this.sysInfo.relay_state = relayState ? 1 : 0;
   }
 
@@ -459,13 +562,146 @@ class Plug extends Device {
   }
 
   /**
+   * True if current scope exposes fan control (`fan_control`).
+   */
+  get supportsFan(): boolean {
+    if (this.#childId && this.#child !== undefined) {
+      return (
+        this.#child.category === 'kasa.switch.outlet.sub-fan' ||
+        this.#child.fan_speed_level !== undefined
+      );
+    }
+
+    return (
+      this.isFanChild() ||
+      this.getFanSpeedLevelValue() !== undefined ||
+      this.hasSmartComponent('fan_control')
+    );
+  }
+
+  /**
+   * True if current scope exposes SMART preset rules (`preset`).
+   */
+  get supportsLightPreset(): boolean {
+    return this.supportsDimmer || this.hasSmartComponent('preset');
+  }
+
+  /**
+   * True if current scope exposes gradual on/off transitions (`on_off_gradually`).
+   */
+  get supportsLightTransition(): boolean {
+    return this.supportsDimmer || this.hasSmartComponent('on_off_gradually');
+  }
+
+  /**
+   * True if current scope exposes SMART LED control (`led`).
+   */
+  get supportsSmartLed(): boolean {
+    return this.hasSmartComponent('led') || this.isSmartProtocolSwitch();
+  }
+
+  /**
+   * Cached fan speed level from sysInfo / current child.
+   */
+  get fanSpeedLevel(): number | undefined {
+    return this.getFanSpeedLevelValue();
+  }
+
+  /**
+   * Cached fan sleep mode from sysInfo / current child.
+   */
+  get fanSleepModeOn(): boolean | undefined {
+    return this.getFanSleepModeOnValue();
+  }
+
+  /**
+   * Cached overheat status from sysInfo / current child.
+   */
+  get overheated(): boolean | undefined {
+    return this.getOverheatedValue();
+  }
+
+  /**
    * True if cached value of `sysinfo` has `feature` property that contains 'ENE'.
    * @returns `true` if cached value of `sysinfo` has `feature` property that contains 'ENE'
    */
   get supportsEmeter(): boolean {
-    return this.sysInfo.feature && typeof this.sysInfo.feature === 'string'
+    return this.sysInfo.feature !== undefined && typeof this.sysInfo.feature === 'string'
       ? this.sysInfo.feature.includes('ENE')
       : false;
+  }
+
+  private shouldUseSmartMethods(sendOptions?: SendOptions): boolean {
+    if (!this.isSmartProtocolSwitch()) {
+      return false;
+    }
+    const transport = sendOptions?.transport ?? this.defaultSendOptions.transport;
+    return transport === 'klap' || transport === 'aes';
+  }
+
+  /**
+   * @internal
+   */
+  applySmartDeviceInfoPartial(
+    partial: Record<string, unknown>,
+    childId: string | undefined = this.#childId,
+  ): void {
+    const normalizedChildId =
+      childId !== undefined ? this.normalizeChildId(childId) : undefined;
+    const child =
+      normalizedChildId !== undefined
+        ? this.#children.get(normalizedChildId)
+        : undefined;
+
+    if (child !== undefined) {
+      if (typeof partial.device_on === 'boolean') {
+        child.state = partial.device_on ? 1 : 0;
+      }
+      if (typeof partial.brightness === 'number') {
+        child.brightness = partial.brightness;
+      }
+      if (typeof partial.fan_speed_level === 'number') {
+        child.fan_speed_level = partial.fan_speed_level;
+      }
+      if (typeof partial.fan_sleep_mode_on === 'boolean') {
+        child.fan_sleep_mode_on = partial.fan_sleep_mode_on;
+      }
+      if (typeof partial.overheat_status === 'string') {
+        child.overheat_status = partial.overheat_status;
+      }
+      if (typeof partial.overheated === 'boolean') {
+        child.overheated = partial.overheated;
+      }
+      this.#child = child;
+    } else {
+      if (typeof partial.device_on === 'boolean') {
+        this.sysInfo.device_on = partial.device_on;
+        this.sysInfo.relay_state = partial.device_on ? 1 : 0;
+      }
+      if (typeof partial.brightness === 'number') {
+        this.sysInfo.brightness = partial.brightness;
+      }
+      if (typeof partial.fan_speed_level === 'number') {
+        this.sysInfo.fan_speed_level = partial.fan_speed_level;
+      }
+      if (typeof partial.fan_sleep_mode_on === 'boolean') {
+        this.sysInfo.fan_sleep_mode_on = partial.fan_sleep_mode_on;
+      }
+      if (typeof partial.overheat_status === 'string') {
+        this.sysInfo.overheat_status = partial.overheat_status;
+      }
+      if (typeof partial.overheated === 'boolean') {
+        this.sysInfo.overheated = partial.overheated;
+      }
+    }
+
+    const brightness = this.getBrightnessValue();
+    if (brightness !== undefined) {
+      this.dimmer.setBrightnessValue(brightness);
+      return;
+    }
+
+    this.emitEvents();
   }
 
   /**
@@ -475,6 +711,23 @@ class Plug extends Device {
 
    */
   override async getSysInfo(sendOptions?: SendOptions): Promise<PlugSysinfo> {
+    if (this.shouldUseSmartMethods(sendOptions)) {
+      const response = await this.sendSmartCommand(
+        'get_device_info',
+        undefined,
+        this.#childId,
+        sendOptions,
+      );
+      if (!isObjectLike(response)) {
+        throw new Error(`Unexpected SMART response: ${JSON.stringify(response)}`);
+      }
+      this.applySmartDeviceInfoPartial(
+        response as Record<string, unknown>,
+        this.#childId,
+      );
+      return this.sysInfo;
+    }
+
     const response = await super.getSysInfo(sendOptions);
 
     if (!isPlugSysinfo(response)) {
@@ -591,8 +844,11 @@ class Plug extends Device {
    * @throws {@link ResponseError}
    */
   async getLedState(sendOptions?: SendOptions): Promise<boolean> {
+    if (this.shouldUseSmartMethods(sendOptions)) {
+      return this.smartLed.getLedState(sendOptions);
+    }
     const sysInfo = await this.getSysInfo(sendOptions);
-    return sysInfo.led_off === 0;
+    return sysInfo.led_off === undefined || sysInfo.led_off === 0;
   }
 
   /**
@@ -603,6 +859,10 @@ class Plug extends Device {
    * @throws {@link ResponseError}
    */
   async setLedState(value: boolean, sendOptions?: SendOptions): Promise<true> {
+    if (this.shouldUseSmartMethods(sendOptions)) {
+      return this.smartLed.setLedState(value, sendOptions);
+    }
+
     await this.sendCommand(
       `{"system":{"set_led_off":{"off":${value ? 0 : 1}}}}`,
       undefined,
@@ -633,6 +893,17 @@ class Plug extends Device {
     value: boolean,
     sendOptions?: SendOptions,
   ): Promise<true> {
+    if (this.shouldUseSmartMethods(sendOptions)) {
+      await this.sendSmartCommand(
+        'set_device_info',
+        { device_on: value },
+        this.#childId,
+        sendOptions,
+      );
+      this.applySmartDeviceInfoPartial({ device_on: value }, this.#childId);
+      return true;
+    }
+
     await this.sendCommand(
       `{"system":{"set_relay_state":{"state":${value ? 1 : 0}}}}`,
       this.#childId,

@@ -667,7 +667,7 @@ class Client extends EventEmitter {
   ): 'plug' | 'bulb' | 'device' {
     const type = 'type' in sysInfo ? sysInfo.type : sysInfo.mic_type;
     switch (true) {
-      case /plug/i.test(type):
+      case /(plug|switch)/i.test(type):
         return 'plug';
       case /bulb/i.test(type):
         return 'bulb';

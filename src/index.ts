@@ -57,11 +57,22 @@ export type {
   DimmerActionInput,
   DimmerTransitionInput,
 } from './plug/dimmer';
+export type { default as Fan } from './plug/fan';
+export type {
+  default as LightPreset,
+  SmartPresetRules,
+} from './plug/light-preset';
+export type {
+  default as LightTransition,
+  LightTransitionInfo,
+} from './plug/light-transition';
+export type { default as OverheatProtection } from './plug/overheat-protection';
 export type {
   default as PlugSchedule,
   PlugScheduleRule,
   PlugScheduleRuleInput,
 } from './plug/schedule';
+export type { default as SmartLed, SmartLedInfo } from './plug/smart-led';
 export type { default as Timer, TimerRuleInput } from './plug/timer';
 
 export type { default as Cloud, CloudInfo } from './shared/cloud';

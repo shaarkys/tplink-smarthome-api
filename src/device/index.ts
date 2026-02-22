@@ -111,13 +111,25 @@ export function isBulbSysinfo(candidate: unknown): candidate is BulbSysinfo {
 }
 
 export function isPlugSysinfo(candidate: unknown): candidate is PlugSysinfo {
-  return (
-    isCommonSysinfo(candidate) &&
-    ('type' in candidate || 'mic_type' in candidate) &&
-    ('mac' in candidate || 'ethernet_mac' in candidate) &&
+  if (!isCommonSysinfo(candidate)) {
+    return false;
+  }
+
+  const hasType = 'type' in candidate || 'mic_type' in candidate;
+  const hasMac = 'mac' in candidate || 'ethernet_mac' in candidate;
+  const hasLegacyShape =
     'feature' in candidate &&
-    ('relay_state' in candidate || 'children' in candidate)
-  );
+    ('relay_state' in candidate || 'children' in candidate);
+  const hasSmartShape =
+    'type' in candidate &&
+    typeof candidate.type === 'string' &&
+    candidate.type.startsWith('SMART.') &&
+    ('device_on' in candidate ||
+      'relay_state' in candidate ||
+      'children' in candidate ||
+      'brightness' in candidate);
+
+  return hasType && hasMac && (hasLegacyShape || hasSmartShape);
 }
 
 function isSysinfo(candidate: unknown): candidate is Sysinfo {

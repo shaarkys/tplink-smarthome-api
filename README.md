@@ -15,6 +15,7 @@ TP-Link Smarthome API
 | Model                                                                                                    | Type               |
 | -------------------------------------------------------------------------------------------------------- | ------------------ |
 | HS100, HS103, HS105, HS107, HS110,<br/>HS200, HS210, HS220, HS300, KP303, KP400<br/>ES20M, EP40, ...etc. | Plug               |
+| KS240, KS225, S500D<br/>...etc.                                                                          | Plug (SMART, experimental) |
 | LB100, LB110, LB120, LB130, LB200, LB230, KL50, KL120, KL125<br/>...etc.                                 | Bulb               |
 | KL430<br/>...etc.                                                                                        | Bulb (light strip) |
 
@@ -27,7 +28,8 @@ Many other TP-Link Plug and Bulb models may work as well. Note that Tapo devices
 - This project primarily targets the legacy TP-Link Smart Home protocol (`IOT.*` on port `9999`), and now includes experimental authenticated HTTP transports: `klap` and `aes` (credential or `credentialsHash` based).
 - If `sysInfo` includes encryption metadata (`mgt_encrypt_schm.encrypt_type` and optional `http_port`), device defaults are inferred automatically (`klap`/`aes` transport and port) unless you explicitly override them.
 - For SMART requests over authenticated transports, use `client.sendSmart(...)`, `device.sendSmartCommand(...)`, and `device.sendSmartRequests(...)` (including child-scoped `control_child` wrapping).
-- As a result, model names like `KS240` are still not automatically equivalent to full high-level feature support in this library.
+- Initial SMART switch support includes SMART power/LED paths and high-level helpers for `fan`, `lightPreset`, `lightTransition`, and `overheatProtection` (including child-scoped KS240 channels).
+- Full python-kasa parity is still in progress; not every SMART component has a dedicated module yet.
 
 ## Related Projects
 
