@@ -422,6 +422,8 @@ describe('KlapConnection', function () {
   });
 
   it('fails predictably when credentials are invalid', async function () {
+    // This negative-path test intentionally triggers auth failures.
+    // `device.send()` logs those failures before reject, so error log lines are expected.
     const server = createKlapTestServer({
       username: 'correct@example.com',
       password: 'correct-secret',
