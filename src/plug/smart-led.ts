@@ -16,10 +16,18 @@ export default class SmartLed {
     readonly childId: string | undefined = undefined,
   ) {}
 
+  private async ensureSupported(sendOptions?: SendOptions): Promise<void> {
+    await this.device.negotiateSmartComponents(sendOptions);
+    if (!this.device.supportsSmartLed) {
+      throw new Error('SmartLed module is not supported for this device scope');
+    }
+  }
+
   /**
    * Requests SMART `get_led_info`.
    */
   async getInfo(sendOptions?: SendOptions): Promise<SmartLedInfo> {
+    await this.ensureSupported(sendOptions);
     const response = await this.device.sendSmartCommand(
       'get_led_info',
       undefined,
@@ -53,6 +61,7 @@ export default class SmartLed {
     value: boolean,
     sendOptions?: SendOptions,
   ): Promise<true> {
+    await this.ensureSupported(sendOptions);
     const current = await this.getInfo(sendOptions);
     const payload: SmartLedInfo = {
       ...current,

@@ -25,10 +25,18 @@ export default class Fan {
     return this.device.fanSleepModeOn;
   }
 
+  private async ensureSupported(sendOptions?: SendOptions): Promise<void> {
+    await this.device.negotiateSmartComponents(sendOptions);
+    if (!this.device.supportsFan) {
+      throw new Error('Fan module is not supported for this device scope');
+    }
+  }
+
   /**
    * Requests SMART `get_device_info` for current scope.
    */
   async getDeviceInfo(sendOptions?: SendOptions): Promise<unknown> {
+    await this.ensureSupported(sendOptions);
     const response = await this.device.sendSmartCommand(
       'get_device_info',
       undefined,
@@ -52,6 +60,7 @@ export default class Fan {
     level: number,
     sendOptions?: SendOptions,
   ): Promise<unknown> {
+    await this.ensureSupported(sendOptions);
     const normalizedLevel = Math.max(0, Math.round(level));
     const params =
       normalizedLevel === 0
@@ -72,6 +81,7 @@ export default class Fan {
    * Sets fan sleep mode using SMART `set_device_info`.
    */
   async setSleepMode(on: boolean, sendOptions?: SendOptions): Promise<unknown> {
+    await this.ensureSupported(sendOptions);
     const params = { fan_sleep_mode_on: on };
     const response = await this.device.sendSmartCommand(
       'set_device_info',

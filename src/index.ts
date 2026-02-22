@@ -49,6 +49,7 @@ export {
   type PlugConstructorOptions,
   type PlugEvents,
   type PlugSysinfo,
+  type SmartComponentInfo,
   type SysinfoChildren,
 } from './plug';
 export type { default as Away, AwayRule, AwayRuleInput } from './plug/away';

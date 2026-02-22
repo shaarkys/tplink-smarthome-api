@@ -29,6 +29,7 @@ Many other TP-Link Plug and Bulb models may work as well. Note that Tapo devices
 - If `sysInfo` includes encryption metadata (`mgt_encrypt_schm.encrypt_type` and optional `http_port`), device defaults are inferred automatically (`klap`/`aes` transport and port) unless you explicitly override them.
 - For SMART requests over authenticated transports, use `client.sendSmart(...)`, `device.sendSmartCommand(...)`, and `device.sendSmartRequests(...)` (including child-scoped `control_child` wrapping).
 - Initial SMART switch support includes SMART power/LED paths and high-level helpers for `fan`, `lightPreset`, `lightTransition`, and `overheatProtection` (including child-scoped KS240 channels).
+- SMART switch capabilities now use component negotiation (`component_nego`, child component lists) for module gating. You can call `await plug.negotiateSmartComponents()` explicitly; `getSysInfo()` over SMART transport performs this lazily on first use.
 - Full python-kasa parity is still in progress; not every SMART component has a dedicated module yet.
 
 ## Related Projects

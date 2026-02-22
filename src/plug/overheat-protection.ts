@@ -11,6 +11,15 @@ export default class OverheatProtection {
     readonly childId: string | undefined = undefined,
   ) {}
 
+  private async ensureSupported(sendOptions?: SendOptions): Promise<void> {
+    await this.device.negotiateSmartComponents(sendOptions);
+    if (!this.device.supportsOverheatProtection) {
+      throw new Error(
+        'OverheatProtection module is not supported for this device scope',
+      );
+    }
+  }
+
   /**
    * Cached overheat status from sysInfo/child sysInfo.
    */
@@ -22,6 +31,7 @@ export default class OverheatProtection {
    * Refreshes SMART device info and returns current overheat status.
    */
   async getOverheated(sendOptions?: SendOptions): Promise<boolean | undefined> {
+    await this.ensureSupported(sendOptions);
     const response = await this.device.sendSmartCommand(
       'get_device_info',
       undefined,

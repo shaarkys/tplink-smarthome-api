@@ -343,6 +343,13 @@ describe('Client', function () {
           state: 0,
           category: 'kasa.switch.outlet.sub-dimmer',
           brightness: 55,
+          components: [
+            'device',
+            'brightness',
+            'preset',
+            'on_off_gradually',
+            'overheat_protection',
+          ],
         },
         {
           id: '01',
@@ -350,6 +357,7 @@ describe('Client', function () {
           state: 0,
           category: 'kasa.switch.outlet.sub-fan',
           fan_speed_level: 1,
+          components: ['device', 'fan_control', 'overheat_protection'],
         },
       ],
     };
@@ -405,6 +413,93 @@ describe('Client', function () {
       });
 
       plug.closeConnection();
+    });
+
+    it('should negotiate component_nego and child component lists for scoped support', async function () {
+      const client = new Client({
+        defaultSendOptions: { transport: 'klap' },
+      });
+      const sysInfoWithoutComponents = JSON.parse(
+        JSON.stringify(smartSwitchSysInfo),
+      );
+      delete sysInfoWithoutComponents.components;
+      sysInfoWithoutComponents.children.forEach((child) => {
+        delete child.components;
+      });
+
+      const lightChild = client.getPlug({
+        host: '127.0.0.1',
+        sysInfo: sysInfoWithoutComponents,
+        childId: '00',
+      });
+      const lightChildId = lightChild.childId;
+      const fanChildId = `${sysInfoWithoutComponents.deviceId}01`;
+
+      const negotiationStub = sinon
+        .stub(lightChild, 'sendSmartRequests')
+        .resolves({
+          component_nego: {
+            component_list: [
+              { id: 'device', ver_code: 2 },
+              { id: 'led', ver_code: 1 },
+              { id: 'child_device', ver_code: 2 },
+              { id: 'fan_control', ver_code: 1 },
+              { id: 'brightness', ver_code: 1 },
+              { id: 'preset', ver_code: 1 },
+              { id: 'on_off_gradually', ver_code: 2 },
+            ],
+          },
+          get_child_device_list: {
+            child_device_list: [
+              {
+                device_id: lightChildId,
+                category: 'kasa.switch.outlet.sub-dimmer',
+                device_on: false,
+                brightness: 70,
+              },
+              {
+                device_id: fanChildId,
+                category: 'kasa.switch.outlet.sub-fan',
+                device_on: true,
+                fan_speed_level: 3,
+              },
+            ],
+          },
+          get_child_device_component_list: {
+            child_component_list: [
+              {
+                device_id: lightChildId,
+                component_list: [
+                  { id: 'device', ver_code: 2 },
+                  { id: 'brightness', ver_code: 1 },
+                  { id: 'preset', ver_code: 1 },
+                  { id: 'on_off_gradually', ver_code: 2 },
+                ],
+              },
+              {
+                device_id: fanChildId,
+                component_list: [
+                  { id: 'device', ver_code: 2 },
+                  { id: 'fan_control', ver_code: 1 },
+                ],
+              },
+            ],
+          },
+        });
+
+      await lightChild.negotiateSmartComponents();
+
+      expect(negotiationStub).to.have.been.calledOnce;
+      expect(lightChild.getComponentVersion('led')).to.equal(undefined);
+      expect(lightChild.getComponentVersion('preset')).to.equal(1);
+      expect(lightChild.getComponentVersion('fan_control')).to.equal(undefined);
+      expect(lightChild.hasComponent('fan_control', '01')).to.equal(true);
+      expect(lightChild.hasComponent('preset', '01')).to.equal(false);
+      expect(lightChild.supportsLightPreset).to.be.true;
+      expect(lightChild.supportsLightTransition).to.be.true;
+      expect(lightChild.supportsFan).to.be.false;
+
+      lightChild.closeConnection();
     });
 
     it('should wire fan, preset, transition and overheat modules', async function () {

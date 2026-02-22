@@ -16,10 +16,18 @@ export default class LightPreset {
     readonly childId: string | undefined = undefined,
   ) {}
 
+  private async ensureSupported(sendOptions?: SendOptions): Promise<void> {
+    await this.device.negotiateSmartComponents(sendOptions);
+    if (!this.device.supportsLightPreset) {
+      throw new Error('LightPreset module is not supported for this device scope');
+    }
+  }
+
   /**
    * Requests SMART `get_preset_rules`.
    */
   async getPresetRules(sendOptions?: SendOptions): Promise<SmartPresetRules> {
+    await this.ensureSupported(sendOptions);
     const response = await this.device.sendSmartCommand(
       'get_preset_rules',
       undefined,
@@ -39,6 +47,7 @@ export default class LightPreset {
     rules: Record<string, unknown>,
     sendOptions?: SendOptions,
   ): Promise<unknown> {
+    await this.ensureSupported(sendOptions);
     return this.device.sendSmartCommand(
       'set_preset_rules',
       rules,
@@ -55,6 +64,7 @@ export default class LightPreset {
     state: Record<string, unknown>,
     sendOptions?: SendOptions,
   ): Promise<unknown> {
+    await this.ensureSupported(sendOptions);
     return this.device.sendSmartCommand(
       'edit_preset_rules',
       { index, state },
@@ -67,6 +77,7 @@ export default class LightPreset {
    * Applies a preset by index using the brightness preset list.
    */
   async setPreset(index: number, sendOptions?: SendOptions): Promise<unknown> {
+    await this.ensureSupported(sendOptions);
     const rules = await this.getPresetRules(sendOptions);
     if (!Array.isArray(rules.brightness)) {
       throw new Error('Preset brightness list is not available');
