@@ -143,6 +143,47 @@ describe('Client', function () {
       plug.closeConnection();
     });
 
+    it('should default getSysInfo port to 80 when client transport is authenticated', async function () {
+      const client = new Client({
+        defaultSendOptions: { transport: 'aes' },
+      });
+      const connection = {
+        send: sinon.stub().resolves(JSON.stringify(validPlugDiscoveryResponse)),
+        close: sinon.stub(),
+      };
+      const createConnectionStub = sinon
+        .stub(client, 'createConnection')
+        .returns(connection);
+
+      const sysInfo = await client.getSysInfo('127.0.0.1');
+      expect(sysInfo).to.deep.equal(validPlugDiscoveryResponse.system.get_sysinfo);
+      expect(createConnectionStub).to.have.been.calledOnce;
+      expect(createConnectionStub.firstCall.args[2]).to.equal(80);
+      expect(connection.send).to.have.been.calledOnce;
+      expect(connection.send.firstCall.args[1]).to.equal(80);
+    });
+
+    it('should default getDevice host lookup to 80 when client transport is authenticated', async function () {
+      const client = new Client({
+        defaultSendOptions: { transport: 'klap' },
+      });
+      const connection = {
+        send: sinon.stub().resolves(JSON.stringify(validPlugDiscoveryResponse)),
+        close: sinon.stub(),
+      };
+      const createConnectionStub = sinon
+        .stub(client, 'createConnection')
+        .returns(connection);
+
+      const device = await client.getDevice({
+        host: '127.0.0.1',
+      });
+
+      expect(createConnectionStub.firstCall.args[2]).to.equal(80);
+      expect(device.port).to.equal(80);
+      device.closeConnection();
+    });
+
     it('should not override explicit transport and port with inferred values', function () {
       const client = new Client({
         defaultSendOptions: { transport: 'tcp' },
