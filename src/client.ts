@@ -16,6 +16,7 @@ import {
 import Device, { isBulbSysinfo, isPlugSysinfo, type Sysinfo } from './device';
 import createLogger, { type Logger } from './logger';
 import type { DeviceConnection } from './network/connection';
+import AesConnection from './network/aes-connection';
 import KlapConnection from './network/klap-connection';
 import TcpConnection from './network/tcp-connection';
 import UdpConnection from './network/udp-connection';
@@ -156,13 +157,13 @@ export interface DiscoveryOptions {
  * Send Options.
  *
  * @typeParam timeout - (ms)
- * @typeParam transport - 'tcp','udp','klap'
+ * @typeParam transport - 'tcp','udp','klap','aes'
  * @typeParam useSharedSocket - attempt to reuse a shared socket if available, UDP only
  * @typeParam sharedSocketTimeout - (ms) how long to wait for another send before closing a shared socket. 0 = never automatically close socket
  */
 export type SendOptions = {
   timeout?: number;
-  transport?: 'tcp' | 'udp' | 'klap';
+  transport?: 'tcp' | 'udp' | 'klap' | 'aes';
   useSharedSocket?: boolean;
   sharedSocketTimeout?: number;
 };
@@ -307,7 +308,7 @@ class Client extends EventEmitter {
    * @internal
    */
   createConnection(
-    transport: 'tcp' | 'udp' | 'klap',
+    transport: 'tcp' | 'udp' | 'klap' | 'aes',
     host: string,
     port: number,
     credentialOptions?: CredentialOptions,
@@ -317,6 +318,13 @@ class Client extends EventEmitter {
     }
     if (transport === 'klap') {
       return new KlapConnection(host, port, this.log, this, {
+        credentials: credentialOptions?.credentials ?? this.credentials,
+        credentialsHash:
+          credentialOptions?.credentialsHash ?? this.credentialsHash,
+      });
+    }
+    if (transport === 'aes') {
+      return new AesConnection(host, port, this.log, this, {
         credentials: credentialOptions?.credentials ?? this.credentials,
         credentialsHash:
           credentialOptions?.credentialsHash ?? this.credentialsHash,
@@ -361,7 +369,11 @@ class Client extends EventEmitter {
     };
 
     const effectivePort =
-      port ?? (thisSendOptions.transport === 'klap' ? 80 : 9999);
+      port ??
+      (thisSendOptions.transport === 'klap' ||
+      thisSendOptions.transport === 'aes'
+        ? 80
+        : 9999);
 
     const payloadString = !(typeof payload === 'string')
       ? JSON.stringify(payload)
@@ -387,9 +399,10 @@ class Client extends EventEmitter {
   }
 
   /**
-   * Sends a SMART payload to a KLAP transport device and returns parsed response.
+   * Sends a SMART payload to an authenticated transport device and returns parsed response.
    *
    * If `sendOptions.transport` is not specified it defaults to `klap`.
+   * Set `sendOptions.transport = 'aes'` for AES securePassthrough devices.
    */
   async sendSmart(
     payload: SmartRequestPayload | string,

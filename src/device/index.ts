@@ -165,7 +165,7 @@ abstract class Device extends EventEmitter {
   private readonly smartTerminalUuid = randomBytes(16).toString('base64');
 
   private readonly connections: Record<
-    'udp' | 'tcp' | 'klap',
+    'udp' | 'tcp' | 'klap' | 'aes',
     DeviceConnection
   >;
 
@@ -208,7 +208,11 @@ abstract class Device extends EventEmitter {
     this._sysInfo = _sysInfo;
     this.host = host;
     this.port =
-      port ?? (client.defaultSendOptions.transport === 'klap' ? 80 : 9999);
+      port ??
+      (client.defaultSendOptions.transport === 'klap' ||
+      client.defaultSendOptions.transport === 'aes'
+        ? 80
+        : 9999);
 
     this.defaultSendOptions = {
       ...client.defaultSendOptions,
@@ -230,6 +234,10 @@ abstract class Device extends EventEmitter {
       udp: this.client.createConnection('udp', this.host, this.port),
       tcp: this.client.createConnection('tcp', this.host, this.port),
       klap: this.client.createConnection('klap', this.host, this.port, {
+        credentials: this.credentials,
+        credentialsHash: this.credentialsHash,
+      }),
+      aes: this.client.createConnection('aes', this.host, this.port, {
         credentials: this.credentials,
         credentialsHash: this.credentialsHash,
       }),
@@ -362,6 +370,7 @@ abstract class Device extends EventEmitter {
     this.connections.udp.close();
     this.connections.tcp.close();
     this.connections.klap.close();
+    this.connections.aes.close();
   }
 
   /**
@@ -491,6 +500,7 @@ abstract class Device extends EventEmitter {
    * Sends a SMART method request to device.
    *
    * - Requests are sent through KLAP transport by default.
+   * - Set `sendOptions.transport = 'aes'` for AES securePassthrough devices.
    * - If `childIds` is specified, the request is wrapped in SMART `control_child`.
    */
   async sendSmartCommand(
