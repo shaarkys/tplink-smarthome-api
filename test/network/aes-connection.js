@@ -423,6 +423,8 @@ describe('AesConnection', function () {
   });
 
   it('fails predictably when AES credentials are invalid', async function () {
+    // This negative-path test intentionally triggers login failures.
+    // `device.send()` logs those failures before reject, so error log lines are expected.
     const server = createAesTestServer({
       username: 'correct@example.com',
       password: 'correct-secret',
