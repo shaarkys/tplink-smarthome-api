@@ -459,7 +459,7 @@ class Client extends EventEmitter {
    */
   async getSysInfo(
     host: string,
-    port = 9999,
+    port?: number,
     sendOptions?: SendOptions,
   ): Promise<Sysinfo> {
     this.log.debug('client.getSysInfo(%j)', { host, port, sendOptions });
