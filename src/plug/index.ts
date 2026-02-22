@@ -936,7 +936,7 @@ class Plug extends Device {
       : false;
   }
 
-  private shouldUseSmartMethods(sendOptions?: SendOptions): boolean {
+  shouldUseSmartMethods(sendOptions?: SendOptions): boolean {
     if (!this.isSmartProtocolSwitch()) {
       return false;
     }

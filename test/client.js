@@ -388,6 +388,47 @@ describe('Client', function () {
       lightChild.closeConnection();
     });
 
+    it('should route SMART dimmer brightness and switch-state via set_device_info', async function () {
+      const client = new Client({
+        defaultSendOptions: { transport: 'aes' },
+      });
+      const lightChild = client.getPlug({
+        host: '127.0.0.1',
+        sysInfo: smartSwitchSysInfo,
+        childId: '00',
+      });
+
+      const smartStub = sinon.stub(lightChild, 'sendSmartCommand');
+      smartStub.onFirstCall().resolves({ err_code: 0 });
+      smartStub.onSecondCall().resolves({ err_code: 0 });
+
+      await lightChild.dimmer.setBrightness(42);
+      await lightChild.dimmer.setSwitchState(true);
+
+      expect(smartStub.firstCall.args).to.deep.equal([
+        'set_device_info',
+        { brightness: 42 },
+        lightChild.dimmer.childId,
+        undefined,
+      ]);
+      expect(smartStub.secondCall.args).to.deep.equal([
+        'set_device_info',
+        { device_on: true },
+        lightChild.dimmer.childId,
+        undefined,
+      ]);
+      expect(lightChild.dimmer.brightness).to.equal(42);
+      expect(lightChild.relayState).to.equal(true);
+
+      await expect(
+        lightChild.dimmer.getDimmerParameters(),
+      ).to.eventually.be.rejectedWith(
+        'getDimmerParameters is not supported for SMART dimmers',
+      );
+
+      lightChild.closeConnection();
+    });
+
     it('should use SMART LED module for getLedState/setLedState', async function () {
       const client = new Client({
         defaultSendOptions: { transport: 'aes' },

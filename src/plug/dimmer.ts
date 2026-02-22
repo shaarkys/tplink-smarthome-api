@@ -59,6 +59,26 @@ export default class Dimmer {
     this.emitEvents();
   }
 
+  private async ensureSmartDimmerSupported(
+    sendOptions?: SendOptions,
+  ): Promise<void> {
+    await this.device.negotiateSmartComponents(sendOptions);
+    if (!this.device.supportsDimmer) {
+      throw new Error('Dimmer module is not supported for this device scope');
+    }
+  }
+
+  private assertLegacyOnlyMethod(
+    methodName: string,
+    sendOptions?: SendOptions,
+  ): void {
+    if (this.device.shouldUseSmartMethods(sendOptions)) {
+      throw new Error(
+        `${methodName} is not supported for SMART dimmers. Use brightness/lightTransition APIs instead.`,
+      );
+    }
+  }
+
   /**
    * Sets Plug to the specified `brightness`.
    *
@@ -71,6 +91,18 @@ export default class Dimmer {
     brightness: number,
     sendOptions?: SendOptions,
   ): Promise<unknown> {
+    if (this.device.shouldUseSmartMethods(sendOptions)) {
+      await this.ensureSmartDimmerSupported(sendOptions);
+      const response = await this.device.sendSmartCommand(
+        'set_device_info',
+        { brightness },
+        this.childId,
+        sendOptions,
+      );
+      this.device.applySmartDeviceInfoPartial({ brightness }, this.childId);
+      return response;
+    }
+
     const results = this.device.sendCommand(
       {
         [this.apiModuleName]: {
@@ -94,6 +126,7 @@ export default class Dimmer {
    * @throws {@link ResponseError}
    */
   async getDefaultBehavior(sendOptions?: SendOptions): Promise<unknown> {
+    this.assertLegacyOnlyMethod('getDefaultBehavior', sendOptions);
     return this.device.sendCommand(
       {
         [this.apiModuleName]: {
@@ -113,6 +146,7 @@ export default class Dimmer {
    * @throws {@link ResponseError}
    */
   async getDimmerParameters(sendOptions?: SendOptions): Promise<unknown> {
+    this.assertLegacyOnlyMethod('getDimmerParameters', sendOptions);
     return this.device.sendCommand(
       {
         [this.apiModuleName]: {
@@ -136,6 +170,27 @@ export default class Dimmer {
     sendOptions?: SendOptions,
   ): Promise<unknown> {
     const { brightness, mode, duration } = dimmerTransition;
+
+    if (this.device.shouldUseSmartMethods(sendOptions)) {
+      await this.ensureSmartDimmerSupported(sendOptions);
+      if (
+        brightness === undefined ||
+        mode !== undefined ||
+        duration !== undefined
+      ) {
+        throw new Error(
+          'SMART dimmer transition supports only brightness updates. Use lightTransition for gradual on/off behavior.',
+        );
+      }
+      const response = await this.device.sendSmartCommand(
+        'set_device_info',
+        { brightness },
+        this.childId,
+        sendOptions,
+      );
+      this.device.applySmartDeviceInfoPartial({ brightness }, this.childId);
+      return response;
+    }
 
     const results = this.device.sendCommand(
       {
@@ -189,6 +244,7 @@ export default class Dimmer {
     },
     sendOptions?: SendOptions,
   ): Promise<unknown> {
+    this.assertLegacyOnlyMethod(actionName, sendOptions);
     return this.device.sendCommand(
       {
         [this.apiModuleName]: {
@@ -213,6 +269,7 @@ export default class Dimmer {
     fadeTime: number,
     sendOptions?: SendOptions,
   ): Promise<unknown> {
+    this.assertLegacyOnlyMethod('setFadeOffTime', sendOptions);
     return this.device.sendCommand(
       {
         [this.apiModuleName]: {
@@ -237,6 +294,7 @@ export default class Dimmer {
     fadeTime: number,
     sendOptions?: SendOptions,
   ): Promise<unknown> {
+    this.assertLegacyOnlyMethod('setFadeOnTime', sendOptions);
     return this.device.sendCommand(
       {
         [this.apiModuleName]: {
@@ -261,6 +319,7 @@ export default class Dimmer {
     duration: number,
     sendOptions?: SendOptions,
   ): Promise<unknown> {
+    this.assertLegacyOnlyMethod('setGentleOffTime', sendOptions);
     return this.device.sendCommand(
       {
         [this.apiModuleName]: {
@@ -285,6 +344,7 @@ export default class Dimmer {
     duration: number,
     sendOptions?: SendOptions,
   ): Promise<unknown> {
+    this.assertLegacyOnlyMethod('setGentleOnTime', sendOptions);
     return this.device.sendCommand(
       {
         [this.apiModuleName]: {
@@ -330,6 +390,21 @@ export default class Dimmer {
     state: boolean | 0 | 1,
     sendOptions?: SendOptions,
   ): Promise<unknown> {
+    if (this.device.shouldUseSmartMethods(sendOptions)) {
+      await this.ensureSmartDimmerSupported(sendOptions);
+      const response = await this.device.sendSmartCommand(
+        'set_device_info',
+        { device_on: state === true || state === 1 },
+        this.childId,
+        sendOptions,
+      );
+      this.device.applySmartDeviceInfoPartial(
+        { device_on: state === true || state === 1 },
+        this.childId,
+      );
+      return response;
+    }
+
     return this.device.sendCommand(
       {
         [this.apiModuleName]: {
