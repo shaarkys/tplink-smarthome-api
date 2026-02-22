@@ -99,6 +99,74 @@ describe('Client', function () {
       expect(plugOverride.credentialsHash).to.equal('device-hash');
     });
 
+    it('should infer aes default transport and port from mgt_encrypt_schm', function () {
+      const client = new Client({
+        defaultSendOptions: { transport: 'tcp' },
+      });
+      const sysInfo = {
+        ...validPlugDiscoveryResponse.system.get_sysinfo,
+        mgt_encrypt_schm: {
+          encrypt_type: 'AES',
+          http_port: 8081,
+          lv: 2,
+        },
+      };
+
+      const plug = client.getPlug({
+        host: '127.0.0.1',
+        sysInfo,
+      });
+      expect(plug.defaultSendOptions.transport).to.equal('aes');
+      expect(plug.port).to.equal(8081);
+      plug.closeConnection();
+    });
+
+    it('should infer klap default transport from mgt_encrypt_schm', function () {
+      const client = new Client({
+        defaultSendOptions: { transport: 'tcp' },
+      });
+      const sysInfo = {
+        ...validPlugDiscoveryResponse.system.get_sysinfo,
+        mgt_encrypt_schm: {
+          encrypt_type: 'KLAP',
+          http_port: 80,
+          lv: 2,
+        },
+      };
+
+      const plug = client.getPlug({
+        host: '127.0.0.1',
+        sysInfo,
+      });
+      expect(plug.defaultSendOptions.transport).to.equal('klap');
+      expect(plug.port).to.equal(80);
+      plug.closeConnection();
+    });
+
+    it('should not override explicit transport and port with inferred values', function () {
+      const client = new Client({
+        defaultSendOptions: { transport: 'tcp' },
+      });
+      const sysInfo = {
+        ...validPlugDiscoveryResponse.system.get_sysinfo,
+        mgt_encrypt_schm: {
+          encrypt_type: 'AES',
+          http_port: 8081,
+          lv: 2,
+        },
+      };
+
+      const plug = client.getPlug({
+        host: '127.0.0.1',
+        port: 9999,
+        defaultSendOptions: { transport: 'tcp' },
+        sysInfo,
+      });
+      expect(plug.defaultSendOptions.transport).to.equal('tcp');
+      expect(plug.port).to.equal(9999);
+      plug.closeConnection();
+    });
+
     it('should redact credentials in getDevice debug logging', async function () {
       const debugSpy = sinon.spy();
       const logger = {

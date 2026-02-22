@@ -344,18 +344,49 @@ describe('AesConnection', function () {
     const client = new Client({
       credentials: { username: 'user@example.com', password: 'secret' },
     });
-    const device = createAesPlug(client, '127.0.0.1', port);
+    const device = client.getPlug({
+      host: '127.0.0.1',
+      port,
+      sysInfo: {
+        ...createPlugSysInfo(),
+        mgt_encrypt_schm: { encrypt_type: 'AES', http_port: port, lv: 2 },
+      },
+    });
 
-    const response = await device.sendSmartCommand(
-      'get_device_info',
-      undefined,
-      undefined,
-      { transport: 'aes' },
-    );
+    const response = await device.sendSmartCommand('get_device_info');
 
     assert.deepStrictEqual(response, { model: 'KS240', via: 'aes' });
 
     device.closeConnection();
+    await server.stop();
+  });
+
+  it('supports SMART client.sendSmart() using client default aes transport', async function () {
+    const server = createAesTestServer({
+      requestHandler(request) {
+        if (request && request.method === 'get_device_info') {
+          return { error_code: 0, result: { via: 'client.sendSmart.aes' } };
+        }
+        return { error_code: 0, result: {} };
+      },
+    });
+    const port = await server.start();
+    const client = new Client({
+      credentials: { username: 'user@example.com', password: 'secret' },
+      defaultSendOptions: { transport: 'aes' },
+    });
+
+    const response = await client.sendSmart(
+      { method: 'get_device_info' },
+      '127.0.0.1',
+      port,
+    );
+
+    assert.deepStrictEqual(response, {
+      error_code: 0,
+      result: { via: 'client.sendSmart.aes' },
+    });
+
     await server.stop();
   });
 
