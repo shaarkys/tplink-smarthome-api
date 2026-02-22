@@ -63,6 +63,13 @@ export interface DeviceConstructorOptions extends CredentialOptions {
   defaultSendOptions?: SendOptions;
 }
 
+export type ManagementEncryptionScheme = {
+  is_support_https?: boolean;
+  encrypt_type?: string;
+  http_port?: number;
+  lv?: number;
+};
+
 // type SysinfoTypeValues =
 //   | 'IOT.SMARTPLUGSWITCH'
 //   | 'IOT.SMARTBULB'
@@ -74,6 +81,7 @@ export type CommonSysinfo = {
   model: string;
   sw_ver: string;
   hw_ver: string;
+  mgt_encrypt_schm?: ManagementEncryptionScheme;
 };
 
 export function isCommonSysinfo(
@@ -207,17 +215,14 @@ abstract class Device extends EventEmitter {
     // eslint-disable-next-line no-underscore-dangle
     this._sysInfo = _sysInfo;
     this.host = host;
-    this.port =
-      port ??
-      (client.defaultSendOptions.transport === 'klap' ||
-      client.defaultSendOptions.transport === 'aes'
-        ? 80
-        : 9999);
-
     this.defaultSendOptions = {
       ...client.defaultSendOptions,
       ...defaultSendOptions,
     };
+    const defaultTransport = this.defaultSendOptions.transport;
+    this.port =
+      port ??
+      (defaultTransport === 'klap' || defaultTransport === 'aes' ? 80 : 9999);
 
     const mergedCredentials = mergeCredentialOptions(
       {
@@ -499,8 +504,8 @@ abstract class Device extends EventEmitter {
   /**
    * Sends a SMART method request to device.
    *
-   * - Requests are sent through KLAP transport by default.
-   * - Set `sendOptions.transport = 'aes'` for AES securePassthrough devices.
+   * - Requests default to `device.defaultSendOptions.transport` when it is
+   *   `klap` or `aes`, otherwise they fall back to `klap`.
    * - If `childIds` is specified, the request is wrapped in SMART `control_child`.
    */
   async sendSmartCommand(
@@ -511,7 +516,11 @@ abstract class Device extends EventEmitter {
   ): Promise<unknown> {
     const smartSendOptions = { ...sendOptions };
     if (smartSendOptions.transport === undefined) {
-      smartSendOptions.transport = 'klap';
+      const defaultTransport = this.defaultSendOptions.transport;
+      smartSendOptions.transport =
+        defaultTransport === 'klap' || defaultTransport === 'aes'
+          ? defaultTransport
+          : 'klap';
     }
 
     const childId = this.getSingleSmartChildId(childIds);

@@ -25,6 +25,7 @@ Many other TP-Link Plug and Bulb models may work as well. Note that Tapo devices
 - Child-scoped operations (`childId`) are supported for plug modules such as `away`, `schedule`, `timer`, `emeter`, and `dimmer`.
 - For child channels that expose brightness in child sysinfo (for example dimmer + fan combinations), dimmer capability is detected from child data when a `childId` is selected.
 - This project primarily targets the legacy TP-Link Smart Home protocol (`IOT.*` on port `9999`), and now includes experimental authenticated HTTP transports: `klap` and `aes` (credential or `credentialsHash` based).
+- If `sysInfo` includes encryption metadata (`mgt_encrypt_schm.encrypt_type` and optional `http_port`), device defaults are inferred automatically (`klap`/`aes` transport and port) unless you explicitly override them.
 - For SMART requests over authenticated transports, use `client.sendSmart(...)`, `device.sendSmartCommand(...)`, and `device.sendSmartRequests(...)` (including child-scoped `control_child` wrapping).
 - As a result, model names like `KS240` are still not automatically equivalent to full high-level feature support in this library.
 

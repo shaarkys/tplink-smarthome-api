@@ -62,6 +62,7 @@ export type DeviceOptionsDiscovery =
     >;
 
 export type DiscoveryDevice = { host: string; port?: number };
+type AuthenticatedTransport = 'klap' | 'aes';
 
 function isSysinfoResponse(candidate: unknown): candidate is SysinfoResponse {
   return (
@@ -70,6 +71,22 @@ function isSysinfoResponse(candidate: unknown): candidate is SysinfoResponse {
     isObjectLike(candidate.system) &&
     'get_sysinfo' in candidate.system
   );
+}
+
+function isAuthenticatedTransport(
+  candidate: SendOptions['transport'],
+): candidate is AuthenticatedTransport {
+  return candidate === 'klap' || candidate === 'aes';
+}
+
+function getTransportFromEncryptType(
+  encryptType: unknown,
+): AuthenticatedTransport | undefined {
+  if (typeof encryptType !== 'string') return undefined;
+  const normalizedType = encryptType.toUpperCase();
+  if (normalizedType === 'KLAP') return 'klap';
+  if (normalizedType === 'AES') return 'aes';
+  return undefined;
 }
 
 export interface ClientConstructorOptions extends CredentialOptions {
@@ -401,18 +418,23 @@ class Client extends EventEmitter {
   /**
    * Sends a SMART payload to an authenticated transport device and returns parsed response.
    *
-   * If `sendOptions.transport` is not specified it defaults to `klap`.
-   * Set `sendOptions.transport = 'aes'` for AES securePassthrough devices.
+   * If `sendOptions.transport` is not specified it defaults to
+   * `client.defaultSendOptions.transport` when it is `klap` or `aes`,
+   * otherwise it falls back to `klap`.
    */
   async sendSmart(
     payload: SmartRequestPayload | string,
     host: string,
-    port = 80,
+    port?: number,
     sendOptions?: SendOptions,
   ): Promise<Record<string, unknown>> {
     const thisSendOptions = { ...sendOptions };
     if (thisSendOptions.transport === undefined) {
-      thisSendOptions.transport = 'klap';
+      thisSendOptions.transport = isAuthenticatedTransport(
+        this.defaultSendOptions.transport,
+      )
+        ? this.defaultSendOptions.transport
+        : 'klap';
     }
 
     const responseString = await this.send(
@@ -493,9 +515,14 @@ class Client extends EventEmitter {
       'client'
     >,
   ): Bulb {
+    const resolvedDeviceOptions =
+      Client.inferDeviceTransportDefaultsFromSysInfo(
+        deviceOptions.sysInfo,
+        deviceOptions,
+      );
     return new Bulb({
       defaultSendOptions: this.defaultSendOptions,
-      ...deviceOptions,
+      ...resolvedDeviceOptions,
       client: this,
     });
   }
@@ -512,9 +539,14 @@ class Client extends EventEmitter {
       'client'
     >,
   ): Plug {
+    const resolvedDeviceOptions =
+      Client.inferDeviceTransportDefaultsFromSysInfo(
+        deviceOptions.sysInfo,
+        deviceOptions,
+      );
     return new Plug({
       defaultSendOptions: this.defaultSendOptions,
-      ...deviceOptions,
+      ...resolvedDeviceOptions,
       client: this,
     });
   }
@@ -563,13 +595,65 @@ class Client extends EventEmitter {
     sysInfo: Sysinfo,
     deviceOptions: AnyDeviceOptionsConstructable,
   ): AnyDevice {
+    const resolvedDeviceOptions =
+      Client.inferDeviceTransportDefaultsFromSysInfo(sysInfo, deviceOptions);
     if (isPlugSysinfo(sysInfo)) {
-      return this.getPlug({ ...deviceOptions, sysInfo });
+      return this.getPlug({ ...resolvedDeviceOptions, sysInfo });
     }
     if (isBulbSysinfo(sysInfo)) {
-      return this.getBulb({ ...deviceOptions, sysInfo });
+      return this.getBulb({ ...resolvedDeviceOptions, sysInfo });
     }
     throw new Error('Could not determine device from sysinfo');
+  }
+
+  private static inferDeviceTransportDefaultsFromSysInfo<
+    T extends {
+      port?: number;
+      defaultSendOptions?: SendOptions;
+    },
+  >(sysInfo: Sysinfo, deviceOptions: T): T {
+    const encryptionScheme = sysInfo.mgt_encrypt_schm;
+    if (!isObjectLike(encryptionScheme)) {
+      return deviceOptions;
+    }
+
+    const inferredTransport = getTransportFromEncryptType(
+      encryptionScheme.encrypt_type,
+    );
+    const inferredPort =
+      typeof encryptionScheme.http_port === 'number' &&
+      Number.isInteger(encryptionScheme.http_port) &&
+      encryptionScheme.http_port > 0
+        ? encryptionScheme.http_port
+        : undefined;
+
+    if (inferredTransport == null && inferredPort == null) {
+      return deviceOptions;
+    }
+
+    const resolvedOptions = { ...deviceOptions };
+    const resolvedDefaultSendOptions = {
+      ...resolvedOptions.defaultSendOptions,
+    };
+
+    if (
+      inferredTransport != null &&
+      resolvedDefaultSendOptions.transport === undefined
+    ) {
+      resolvedDefaultSendOptions.transport = inferredTransport;
+    }
+    if (
+      resolvedDefaultSendOptions.transport !== undefined ||
+      resolvedOptions.defaultSendOptions !== undefined
+    ) {
+      resolvedOptions.defaultSendOptions = resolvedDefaultSendOptions;
+    }
+
+    if (inferredPort != null && resolvedOptions.port == null) {
+      resolvedOptions.port = inferredPort;
+    }
+
+    return resolvedOptions;
   }
 
   /**
