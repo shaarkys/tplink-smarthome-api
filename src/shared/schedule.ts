@@ -228,6 +228,25 @@ export default abstract class Schedule {
     readonly childId?: string,
   ) {}
 
+  private isSmartPath(sendOptions?: SendOptions): boolean {
+    return (
+      'shouldUseSmartMethods' in this.device &&
+      typeof this.device.shouldUseSmartMethods === 'function' &&
+      this.device.shouldUseSmartMethods(sendOptions)
+    );
+  }
+
+  private assertLegacyOnlyMethod(
+    methodName: string,
+    sendOptions?: SendOptions,
+  ): void {
+    if (this.isSmartPath(sendOptions)) {
+      throw new Error(
+        `${methodName} is not supported for SMART devices in tplink-smarthome-api yet.`,
+      );
+    }
+  }
+
   /**
    * Gets Next Schedule Rule Action.
    *
@@ -237,6 +256,7 @@ export default abstract class Schedule {
   async getNextAction(
     sendOptions?: SendOptions,
   ): Promise<ScheduleNextActionResponse> {
+    this.assertLegacyOnlyMethod('schedule.getNextAction', sendOptions);
     this.nextAction = extractResponse<ScheduleNextActionResponse>(
       await this.device.sendCommand(
         {
@@ -259,6 +279,7 @@ export default abstract class Schedule {
    * @throws {@link ResponseError}
    */
   async getRules(sendOptions?: SendOptions): Promise<ScheduleRulesResponse> {
+    this.assertLegacyOnlyMethod('schedule.getRules', sendOptions);
     return extractResponse<ScheduleRulesResponse>(
       await this.device.sendCommand(
         {
@@ -305,6 +326,7 @@ export default abstract class Schedule {
     rule: object,
     sendOptions?: SendOptions,
   ): Promise<{ id: string }> {
+    this.assertLegacyOnlyMethod('schedule.addRule', sendOptions);
     return extractResponse<{ id: string }>(
       await this.device.sendCommand(
         {
@@ -328,6 +350,7 @@ export default abstract class Schedule {
    * @throws {@link ResponseError}
    */
   async editRule(rule: object, sendOptions?: SendOptions): Promise<unknown> {
+    this.assertLegacyOnlyMethod('schedule.editRule', sendOptions);
     return this.device.sendCommand(
       {
         [this.apiModuleName]: { edit_rule: rule },
@@ -345,6 +368,7 @@ export default abstract class Schedule {
    * @throws {@link ResponseError}
    */
   async deleteAllRules(sendOptions?: SendOptions): Promise<unknown> {
+    this.assertLegacyOnlyMethod('schedule.deleteAllRules', sendOptions);
     return this.device.sendCommand(
       {
         [this.apiModuleName]: { delete_all_rules: {} },
@@ -362,6 +386,7 @@ export default abstract class Schedule {
    * @throws {@link ResponseError}
    */
   async deleteRule(id: string, sendOptions?: SendOptions): Promise<unknown> {
+    this.assertLegacyOnlyMethod('schedule.deleteRule', sendOptions);
     return this.device.sendCommand(
       {
         [this.apiModuleName]: { delete_rule: { id } },
@@ -382,6 +407,7 @@ export default abstract class Schedule {
     enable: boolean,
     sendOptions?: SendOptions,
   ): Promise<unknown> {
+    this.assertLegacyOnlyMethod('schedule.setOverallEnable', sendOptions);
     return this.device.sendCommand(
       {
         [this.apiModuleName]: {
@@ -405,6 +431,7 @@ export default abstract class Schedule {
     month: number,
     sendOptions?: SendOptions,
   ): Promise<unknown> {
+    this.assertLegacyOnlyMethod('schedule.getDayStats', sendOptions);
     return this.device.sendCommand(
       {
         [this.apiModuleName]: { get_daystat: { year, month } },
@@ -425,6 +452,7 @@ export default abstract class Schedule {
     year: number,
     sendOptions?: SendOptions,
   ): Promise<unknown> {
+    this.assertLegacyOnlyMethod('schedule.getMonthStats', sendOptions);
     return this.device.sendCommand(
       {
         [this.apiModuleName]: { get_monthstat: { year } },
@@ -442,6 +470,7 @@ export default abstract class Schedule {
    * @throws {@link ResponseError}
    */
   async eraseStats(sendOptions?: SendOptions): Promise<unknown> {
+    this.assertLegacyOnlyMethod('schedule.eraseStats', sendOptions);
     return this.device.sendCommand(
       {
         [this.apiModuleName]: { erase_runtime_stat: {} },
