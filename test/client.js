@@ -208,6 +208,26 @@ describe('Client', function () {
       plug.closeConnection();
     });
 
+    it('should classify SMART switch sysinfo as a Plug device', function () {
+      const client = new Client({
+        defaultSendOptions: { transport: 'klap' },
+      });
+      const sysInfo = {
+        ...validPlugDiscoveryResponse.system.get_sysinfo,
+        type: 'SMART.KASASWITCH',
+        feature: undefined,
+        relay_state: undefined,
+        device_on: false,
+        led_off: 0,
+      };
+
+      const device = client.getDeviceFromSysInfo(sysInfo, {
+        host: '127.0.0.1',
+      });
+      expect(device).to.be.instanceof(Plug);
+      device.closeConnection();
+    });
+
     it('should redact credentials in getDevice debug logging', async function () {
       const debugSpy = sinon.spy();
       const logger = {
@@ -293,6 +313,296 @@ describe('Client', function () {
         { 'smartlife.iot.dimmer': { set_brightness: { brightness: 42 } } },
         '00',
       );
+    });
+  });
+
+  describe('SMART switch module wiring', function () {
+    const smartSwitchSysInfo = {
+      alias: 'KS240',
+      deviceId: 'smart-switch-device-id',
+      model: 'KS240(US)',
+      sw_ver: '1.0.0',
+      hw_ver: '1.0',
+      type: 'SMART.KASASWITCH',
+      mac: '00:11:22:33:44:55',
+      led_off: 0,
+      device_on: false,
+      components: [
+        'device',
+        'led',
+        'brightness',
+        'preset',
+        'on_off_gradually',
+        'fan_control',
+        'overheat_protection',
+      ],
+      children: [
+        {
+          id: '00',
+          alias: 'Light',
+          state: 0,
+          category: 'kasa.switch.outlet.sub-dimmer',
+          brightness: 55,
+          components: [
+            'device',
+            'brightness',
+            'preset',
+            'on_off_gradually',
+            'overheat_protection',
+          ],
+        },
+        {
+          id: '01',
+          alias: 'Fan',
+          state: 0,
+          category: 'kasa.switch.outlet.sub-fan',
+          fan_speed_level: 1,
+          components: ['device', 'fan_control', 'overheat_protection'],
+        },
+      ],
+    };
+
+    it('should route SMART get/set power state through sendSmartCommand', async function () {
+      const client = new Client({
+        defaultSendOptions: { transport: 'klap' },
+      });
+      const lightChild = client.getPlug({
+        host: '127.0.0.1',
+        sysInfo: smartSwitchSysInfo,
+        childId: '00',
+      });
+
+      const smartStub = sinon.stub(lightChild, 'sendSmartCommand');
+      smartStub
+        .withArgs('get_device_info', undefined, lightChild.childId)
+        .resolves({ device_on: true });
+      smartStub
+        .withArgs('set_device_info', { device_on: false }, lightChild.childId)
+        .resolves({ err_code: 0 });
+
+      expect(await lightChild.getPowerState()).to.be.true;
+      expect(await lightChild.setPowerState(false)).to.be.true;
+      expect(lightChild.relayState).to.be.false;
+      expect(smartStub).to.have.been.calledTwice;
+
+      lightChild.closeConnection();
+    });
+
+    it('should route SMART dimmer brightness and switch-state via set_device_info', async function () {
+      const client = new Client({
+        defaultSendOptions: { transport: 'aes' },
+      });
+      const lightChild = client.getPlug({
+        host: '127.0.0.1',
+        sysInfo: smartSwitchSysInfo,
+        childId: '00',
+      });
+
+      const smartStub = sinon.stub(lightChild, 'sendSmartCommand');
+      smartStub.onFirstCall().resolves({ err_code: 0 });
+      smartStub.onSecondCall().resolves({ err_code: 0 });
+
+      await lightChild.dimmer.setBrightness(42);
+      await lightChild.dimmer.setSwitchState(true);
+
+      expect(smartStub.firstCall.args).to.deep.equal([
+        'set_device_info',
+        { brightness: 42 },
+        lightChild.dimmer.childId,
+        undefined,
+      ]);
+      expect(smartStub.secondCall.args).to.deep.equal([
+        'set_device_info',
+        { device_on: true },
+        lightChild.dimmer.childId,
+        undefined,
+      ]);
+      expect(lightChild.dimmer.brightness).to.equal(42);
+      expect(lightChild.relayState).to.equal(true);
+
+      await expect(
+        lightChild.dimmer.getDimmerParameters(),
+      ).to.eventually.be.rejectedWith(
+        'getDimmerParameters is not supported for SMART dimmers',
+      );
+
+      lightChild.closeConnection();
+    });
+
+    it('should use SMART LED module for getLedState/setLedState', async function () {
+      const client = new Client({
+        defaultSendOptions: { transport: 'aes' },
+      });
+      const plug = client.getPlug({
+        host: '127.0.0.1',
+        sysInfo: smartSwitchSysInfo,
+      });
+
+      const smartStub = sinon.stub(plug, 'sendSmartCommand');
+      smartStub.onFirstCall().resolves({ led_status: false, led_rule: 'never' });
+      smartStub.onSecondCall().resolves({ led_status: false, led_rule: 'never' });
+      smartStub.onThirdCall().resolves({ err_code: 0 });
+
+      expect(await plug.getLedState()).to.be.false;
+      expect(await plug.setLedState(true)).to.be.true;
+      expect(plug.sysInfo.led_off).to.equal(0);
+
+      expect(smartStub.thirdCall.args[0]).to.equal('set_led_info');
+      expect(smartStub.thirdCall.args[1]).to.containSubset({
+        led_rule: 'always',
+        led_status: true,
+      });
+
+      plug.closeConnection();
+    });
+
+    it('should negotiate component_nego and child component lists for scoped support', async function () {
+      const client = new Client({
+        defaultSendOptions: { transport: 'klap' },
+      });
+      const sysInfoWithoutComponents = JSON.parse(
+        JSON.stringify(smartSwitchSysInfo),
+      );
+      delete sysInfoWithoutComponents.components;
+      sysInfoWithoutComponents.children.forEach((child) => {
+        delete child.components;
+      });
+
+      const lightChild = client.getPlug({
+        host: '127.0.0.1',
+        sysInfo: sysInfoWithoutComponents,
+        childId: '00',
+      });
+      const lightChildId = lightChild.childId;
+      const fanChildId = `${sysInfoWithoutComponents.deviceId}01`;
+
+      const negotiationStub = sinon
+        .stub(lightChild, 'sendSmartRequests')
+        .resolves({
+          component_nego: {
+            component_list: [
+              { id: 'device', ver_code: 2 },
+              { id: 'led', ver_code: 1 },
+              { id: 'child_device', ver_code: 2 },
+              { id: 'fan_control', ver_code: 1 },
+              { id: 'brightness', ver_code: 1 },
+              { id: 'preset', ver_code: 1 },
+              { id: 'on_off_gradually', ver_code: 2 },
+            ],
+          },
+          get_child_device_list: {
+            child_device_list: [
+              {
+                device_id: lightChildId,
+                category: 'kasa.switch.outlet.sub-dimmer',
+                device_on: false,
+                brightness: 70,
+              },
+              {
+                device_id: fanChildId,
+                category: 'kasa.switch.outlet.sub-fan',
+                device_on: true,
+                fan_speed_level: 3,
+              },
+            ],
+          },
+          get_child_device_component_list: {
+            child_component_list: [
+              {
+                device_id: lightChildId,
+                component_list: [
+                  { id: 'device', ver_code: 2 },
+                  { id: 'brightness', ver_code: 1 },
+                  { id: 'preset', ver_code: 1 },
+                  { id: 'on_off_gradually', ver_code: 2 },
+                ],
+              },
+              {
+                device_id: fanChildId,
+                component_list: [
+                  { id: 'device', ver_code: 2 },
+                  { id: 'fan_control', ver_code: 1 },
+                ],
+              },
+            ],
+          },
+        });
+
+      await lightChild.negotiateSmartComponents();
+
+      expect(negotiationStub).to.have.been.calledOnce;
+      expect(lightChild.getComponentVersion('led')).to.equal(undefined);
+      expect(lightChild.getComponentVersion('preset')).to.equal(1);
+      expect(lightChild.getComponentVersion('fan_control')).to.equal(undefined);
+      expect(lightChild.hasComponent('fan_control', '01')).to.equal(true);
+      expect(lightChild.hasComponent('preset', '01')).to.equal(false);
+      expect(lightChild.supportsLightPreset).to.be.true;
+      expect(lightChild.supportsLightTransition).to.be.true;
+      expect(lightChild.supportsFan).to.be.false;
+
+      lightChild.closeConnection();
+    });
+
+    it('should wire fan, preset, transition and overheat modules', async function () {
+      const client = new Client({
+        defaultSendOptions: { transport: 'klap' },
+      });
+      const fanChild = client.getPlug({
+        host: '127.0.0.1',
+        sysInfo: smartSwitchSysInfo,
+        childId: '01',
+      });
+      const lightChild = client.getPlug({
+        host: '127.0.0.1',
+        sysInfo: smartSwitchSysInfo,
+        childId: '00',
+      });
+
+      expect(fanChild.supportsFan).to.be.true;
+      expect(lightChild.supportsFan).to.be.false;
+      expect(lightChild.supportsLightPreset).to.be.true;
+      expect(lightChild.supportsLightTransition).to.be.true;
+
+      const fanStub = sinon.stub(fanChild, 'sendSmartCommand').resolves({
+        err_code: 0,
+      });
+      await fanChild.fan.setFanSpeedLevel(2);
+      expect(fanStub).to.have.been.calledWith(
+        'set_device_info',
+        {
+          device_on: true,
+          fan_speed_level: 2,
+        },
+        fanChild.fan.childId,
+      );
+      expect(fanChild.fan.speedLevel).to.equal(2);
+
+      const presetStub = sinon.stub(lightChild, 'sendSmartCommand');
+      presetStub.onFirstCall().resolves({ brightness: [100, 60, 30] });
+      await lightChild.lightPreset.getPresetRules();
+      expect(presetStub).to.have.been.calledWith(
+        'get_preset_rules',
+        undefined,
+        lightChild.lightPreset.childId,
+      );
+
+      presetStub.onSecondCall().resolves({
+        on_state: { enable: false, duration: 2 },
+        off_state: { enable: false, duration: 2 },
+      });
+      presetStub.onThirdCall().resolves({ err_code: 0 });
+      await lightChild.lightTransition.setEnabled(true);
+      expect(presetStub.thirdCall.args[0]).to.equal('set_on_off_gradually_info');
+      expect(presetStub.thirdCall.args[1]).to.containSubset({
+        on_state: { enable: true },
+        off_state: { enable: true },
+      });
+
+      presetStub.onCall(3).resolves({ overheat_status: 'overheated' });
+      expect(await lightChild.overheatProtection.getOverheated()).to.be.true;
+
+      fanChild.closeConnection();
+      lightChild.closeConnection();
     });
   });
 

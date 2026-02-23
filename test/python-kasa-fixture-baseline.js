@@ -134,4 +134,62 @@ describe('python-kasa fixture baseline', function () {
     });
     childDevice.closeConnection();
   });
+
+  it('routes KS240 child dimmer brightness through SMART set_device_info', async function () {
+    const fixture = loadFixture('KS240(US)_1.0_1.0.5.min.json');
+    const sysInfo = toLegacyPlugSysInfo(fixture);
+    sysInfo.components = ['device', 'child_device', 'brightness'];
+    sysInfo.children = sysInfo.children.map((child) => {
+      if (child.category === 'kasa.switch.outlet.sub-dimmer') {
+        return {
+          ...child,
+          components: ['device', 'brightness'],
+        };
+      }
+      return {
+        ...child,
+        components: ['device', 'fan_control'],
+      };
+    });
+    const childId =
+      fixture.get_child_device_list.child_device_list[0].device_id;
+    const client = new Client({
+      defaultSendOptions: { transport: 'aes' },
+    });
+
+    const childDevice = client.getPlug({
+      host: '127.0.0.1',
+      sysInfo,
+      childId,
+    });
+
+    const sendStub = sinon.stub(childDevice, 'send').resolves(
+      JSON.stringify({
+        error_code: 0,
+        result: {
+          responseData: {
+            error_code: 0,
+            result: { ack: true },
+          },
+        },
+      }),
+    );
+
+    const response = await childDevice.dimmer.setBrightness(33);
+
+    expect(response).to.deep.equal({ ack: true });
+    expect(sendStub).to.have.been.calledOnce;
+    expect(sendStub.firstCall.args[0]).to.containSubset({
+      method: 'control_child',
+      params: {
+        device_id: childId,
+        requestData: {
+          method: 'set_device_info',
+          params: { brightness: 33 },
+        },
+      },
+    });
+    expect(childDevice.dimmer.brightness).to.equal(33);
+    childDevice.closeConnection();
+  });
 });
