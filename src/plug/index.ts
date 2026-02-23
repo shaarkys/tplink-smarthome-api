@@ -34,6 +34,8 @@ export type PlugChild = {
   category?: string;
   model?: string;
   brightness?: number;
+  auto_off_status?: string;
+  auto_off_remain_time?: number;
   fan_speed_level?: number;
   fan_sleep_mode_on?: boolean;
   overheat_status?: string;
@@ -69,6 +71,8 @@ export type PlugSysinfo = CommonSysinfo &
     device_on?: boolean;
     dev_name?: string;
     brightness?: number;
+    auto_off_status?: string;
+    auto_off_remain_time?: number;
     fan_speed_level?: number;
     fan_sleep_mode_on?: boolean;
     overheat_status?: string;
@@ -592,6 +596,12 @@ class Plug extends Device {
       if (typeof entry.brightness === 'number') {
         child.brightness = entry.brightness;
       }
+      if (typeof entry.auto_off_status === 'string') {
+        child.auto_off_status = entry.auto_off_status;
+      }
+      if (typeof entry.auto_off_remain_time === 'number') {
+        child.auto_off_remain_time = entry.auto_off_remain_time;
+      }
       if (typeof entry.fan_speed_level === 'number') {
         child.fan_speed_level = entry.fan_speed_level;
       }
@@ -965,6 +975,12 @@ class Plug extends Device {
       if (typeof partial.brightness === 'number') {
         child.brightness = partial.brightness;
       }
+      if (typeof partial.auto_off_status === 'string') {
+        child.auto_off_status = partial.auto_off_status;
+      }
+      if (typeof partial.auto_off_remain_time === 'number') {
+        child.auto_off_remain_time = partial.auto_off_remain_time;
+      }
       if (typeof partial.fan_speed_level === 'number') {
         child.fan_speed_level = partial.fan_speed_level;
       }
@@ -985,6 +1001,12 @@ class Plug extends Device {
       }
       if (typeof partial.brightness === 'number') {
         this.sysInfo.brightness = partial.brightness;
+      }
+      if (typeof partial.auto_off_status === 'string') {
+        this.sysInfo.auto_off_status = partial.auto_off_status;
+      }
+      if (typeof partial.auto_off_remain_time === 'number') {
+        this.sysInfo.auto_off_remain_time = partial.auto_off_remain_time;
       }
       if (typeof partial.fan_speed_level === 'number') {
         this.sysInfo.fan_speed_level = partial.fan_speed_level;

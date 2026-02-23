@@ -332,6 +332,7 @@ describe('Client', function () {
         'cloud_connect',
         'time',
         'led',
+        'auto_off',
         'brightness',
         'preset',
         'on_off_gradually',
@@ -347,6 +348,7 @@ describe('Client', function () {
           brightness: 55,
           components: [
             'device',
+            'auto_off',
             'brightness',
             'preset',
             'on_off_gradually',
@@ -427,6 +429,74 @@ describe('Client', function () {
       ).to.eventually.be.rejectedWith(
         'getDimmerParameters is not supported for SMART dimmers',
       );
+
+      lightChild.closeConnection();
+    });
+
+    it('should route SMART timer through auto_off config methods', async function () {
+      const client = new Client({
+        defaultSendOptions: { transport: 'aes' },
+      });
+      const lightChild = client.getPlug({
+        host: '127.0.0.1',
+        sysInfo: smartSwitchSysInfo,
+        childId: '00',
+      });
+
+      const smartStub = sinon.stub(lightChild, 'sendSmartCommand');
+      smartStub
+        .withArgs('get_auto_off_config', undefined, lightChild.timer.childId)
+        .resolves({ enable: true, delay_min: 5 });
+      smartStub
+        .withArgs(
+          'set_auto_off_config',
+          { enable: true, delay_min: 2 },
+          lightChild.timer.childId,
+        )
+        .resolves({ err_code: 0 });
+      smartStub
+        .withArgs(
+          'set_auto_off_config',
+          { enable: false, delay_min: 5 },
+          lightChild.timer.childId,
+        )
+        .resolves({ err_code: 0 });
+
+      const rules = await lightChild.timer.getRules();
+      expect(rules).to.containSubset({
+        err_code: 0,
+      });
+      expect(rules.rule_list).to.be.an('array').with.length(1);
+      expect(rules.rule_list[0]).to.containSubset({
+        id: 'auto_off',
+        enable: 1,
+        act: 0,
+        delay: 300,
+      });
+
+      const addResponse = await lightChild.timer.addRule({
+        delay: 120,
+        powerState: false,
+        deleteExisting: true,
+      });
+      expect(addResponse).to.containSubset({
+        err_code: 0,
+        id: 'auto_off',
+      });
+
+      await expect(
+        lightChild.timer.addRule({
+          delay: 120,
+          powerState: true,
+          deleteExisting: true,
+        }),
+      ).to.eventually.be.rejectedWith(
+        'SMART auto_off only supports powerState=false',
+      );
+
+      expect(await lightChild.timer.deleteAllRules()).to.containSubset({
+        err_code: 0,
+      });
 
       lightChild.closeConnection();
     });
