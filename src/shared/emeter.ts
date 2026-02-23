@@ -61,15 +61,63 @@ export default class Emeter {
     }
   }
 
-  private assertSmartStatsUnsupported(
-    methodName: string,
-    sendOptions?: SendOptions,
-  ): void {
-    if (this.isSmartPath(sendOptions)) {
-      throw new Error(
-        `${methodName} is not supported for SMART devices in tplink-smarthome-api yet.`,
-      );
+  private toLegacyDayStatsFromEnergyUsage(
+    year: number,
+    month: number,
+    energyUsage: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const day = new Date().getDate();
+    const dayEnergy =
+      typeof energyUsage.today_energy === 'number' ? energyUsage.today_energy : 0;
+
+    return {
+      err_code: 0,
+      day_list: [
+        {
+          year,
+          month,
+          day,
+          energy: dayEnergy,
+        },
+      ],
+    };
+  }
+
+  private toLegacyMonthStatsFromEnergyUsage(
+    year: number,
+    energyUsage: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const month = new Date().getMonth() + 1;
+    const monthEnergy =
+      typeof energyUsage.month_energy === 'number'
+        ? energyUsage.month_energy
+        : typeof energyUsage.today_energy === 'number'
+          ? energyUsage.today_energy
+          : 0;
+
+    return {
+      err_code: 0,
+      month_list: [
+        {
+          year,
+          month,
+          energy: monthEnergy,
+        },
+      ],
+    };
+  }
+
+  private toLegacyStyleAckResponse(response: unknown): Record<string, unknown> {
+    if (hasErrCode(response)) {
+      return response;
     }
+    if (isObjectLike(response)) {
+      return {
+        err_code: 0,
+        ...response,
+      };
+    }
+    return { err_code: 0 };
   }
 
   private toSmartRealtimeFromEnergyUsage(
@@ -234,7 +282,42 @@ export default class Emeter {
     month: number,
     sendOptions?: SendOptions,
   ): Promise<unknown> {
-    this.assertSmartStatsUnsupported('emeter.getDayStats', sendOptions);
+    if (this.isSmartPath(sendOptions)) {
+      await this.ensureSmartSupported(sendOptions);
+      try {
+        const runtimeStats = await this.device.sendSmartCommand(
+          'get_runtime_stat',
+          { year, month },
+          this.childId,
+          sendOptions,
+        );
+        if (isObjectLike(runtimeStats)) {
+          return this.toLegacyStyleAckResponse(runtimeStats);
+        }
+      } catch {
+        // Fallback to energy usage based compatibility shape.
+      }
+
+      const energyUsage = await this.device.sendSmartCommand(
+        'get_energy_usage',
+        undefined,
+        this.childId,
+        sendOptions,
+      );
+      if (!isObjectLike(energyUsage)) {
+        throw new Error(
+          `Unexpected SMART energy usage response: ${JSON.stringify(
+            energyUsage,
+          )}`,
+        );
+      }
+      return this.toLegacyDayStatsFromEnergyUsage(
+        year,
+        month,
+        energyUsage as Record<string, unknown>,
+      );
+    }
+
     return this.device.sendCommand(
       {
         [this.apiModuleName]: { get_daystat: { year, month } },
@@ -257,7 +340,41 @@ export default class Emeter {
     year: number,
     sendOptions?: SendOptions,
   ): Promise<unknown> {
-    this.assertSmartStatsUnsupported('emeter.getMonthStats', sendOptions);
+    if (this.isSmartPath(sendOptions)) {
+      await this.ensureSmartSupported(sendOptions);
+      try {
+        const runtimeStats = await this.device.sendSmartCommand(
+          'get_runtime_stat',
+          { year },
+          this.childId,
+          sendOptions,
+        );
+        if (isObjectLike(runtimeStats)) {
+          return this.toLegacyStyleAckResponse(runtimeStats);
+        }
+      } catch {
+        // Fallback to energy usage based compatibility shape.
+      }
+
+      const energyUsage = await this.device.sendSmartCommand(
+        'get_energy_usage',
+        undefined,
+        this.childId,
+        sendOptions,
+      );
+      if (!isObjectLike(energyUsage)) {
+        throw new Error(
+          `Unexpected SMART energy usage response: ${JSON.stringify(
+            energyUsage,
+          )}`,
+        );
+      }
+      return this.toLegacyMonthStatsFromEnergyUsage(
+        year,
+        energyUsage as Record<string, unknown>,
+      );
+    }
+
     return this.device.sendCommand(
       {
         [this.apiModuleName]: { get_monthstat: { year } },
@@ -276,7 +393,28 @@ export default class Emeter {
    * @throws {@link ResponseError}
    */
   async eraseStats(sendOptions?: SendOptions): Promise<unknown> {
-    this.assertSmartStatsUnsupported('emeter.eraseStats', sendOptions);
+    if (this.isSmartPath(sendOptions)) {
+      await this.ensureSmartSupported(sendOptions);
+
+      try {
+        const response = await this.device.sendSmartCommand(
+          'erase_emeter_stat',
+          undefined,
+          this.childId,
+          sendOptions,
+        );
+        return this.toLegacyStyleAckResponse(response);
+      } catch {
+        const response = await this.device.sendSmartCommand(
+          'erase_runtime_stat',
+          undefined,
+          this.childId,
+          sendOptions,
+        );
+        return this.toLegacyStyleAckResponse(response);
+      }
+    }
+
     return this.device.sendCommand(
       {
         [this.apiModuleName]: { erase_emeter_stat: {} },

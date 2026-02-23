@@ -328,6 +328,19 @@ abstract class Device extends EventEmitter {
     return '';
   }
 
+  isSmartProtocolDevice(): boolean {
+    const typeValue = this.type;
+    return typeof typeValue === 'string' && typeValue.startsWith('SMART.');
+  }
+
+  shouldUseSmartMethods(sendOptions?: SendOptions): boolean {
+    if (!this.isSmartProtocolDevice()) {
+      return false;
+    }
+    const transport = sendOptions?.transport ?? this.defaultSendOptions.transport;
+    return transport === 'klap' || transport === 'aes';
+  }
+
   /**
    * Type of device (or `device` if unknown).
    *
@@ -755,6 +768,17 @@ abstract class Device extends EventEmitter {
    * @throws {@link ResponseError}
    */
   async setAlias(alias: string, sendOptions?: SendOptions): Promise<boolean> {
+    if (this.shouldUseSmartMethods(sendOptions)) {
+      await this.sendSmartCommand(
+        'set_device_info',
+        { nickname: Buffer.from(alias, 'utf8').toString('base64') },
+        undefined,
+        sendOptions,
+      );
+      this.setAliasProperty(alias);
+      return true;
+    }
+
     await this.sendCommand(
       {
         [this.apiModules.system]: {
@@ -819,6 +843,15 @@ abstract class Device extends EventEmitter {
    * @throws {@link ResponseError}
    */
   async reboot(delay: number, sendOptions?: SendOptions): Promise<unknown> {
+    if (this.shouldUseSmartMethods(sendOptions)) {
+      return this.sendSmartCommand(
+        'device_reboot',
+        { delay },
+        undefined,
+        sendOptions,
+      );
+    }
+
     return this.sendCommand(
       {
         [this.apiModules.system]: { reboot: { delay } },
@@ -836,6 +869,10 @@ abstract class Device extends EventEmitter {
    * @throws {@link ResponseError}
    */
   async reset(delay: number, sendOptions?: SendOptions): Promise<unknown> {
+    if (this.shouldUseSmartMethods(sendOptions)) {
+      return this.sendSmartCommand('device_reset', undefined, undefined, sendOptions);
+    }
+
     return this.sendCommand(
       {
         [this.apiModules.system]: { reset: { delay } },

@@ -941,12 +941,15 @@ class Plug extends Device {
    * @returns `true` if cached value of `sysinfo` has `feature` property that contains 'ENE'
    */
   get supportsEmeter(): boolean {
+    if (this.isSmartProtocolSwitch()) {
+      return this.hasComponent('energy_monitoring');
+    }
     return this.sysInfo.feature !== undefined && typeof this.sysInfo.feature === 'string'
       ? this.sysInfo.feature.includes('ENE')
       : false;
   }
 
-  shouldUseSmartMethods(sendOptions?: SendOptions): boolean {
+  override shouldUseSmartMethods(sendOptions?: SendOptions): boolean {
     if (!this.isSmartProtocolSwitch()) {
       return false;
     }
@@ -1094,6 +1097,42 @@ class Plug extends Device {
     emeter: { realtime: Record<string, unknown> };
     schedule: { nextAction: Record<string, unknown> };
   }> {
+    if (this.shouldUseSmartMethods(sendOptions)) {
+      await this.getSysInfo(sendOptions);
+
+      let cloudInfo: CloudInfo & HasErrCode = this.cloud.info ?? { err_code: 0 };
+      try {
+        cloudInfo = await this.cloud.getInfo(sendOptions);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (!message.includes('Cloud module is not supported')) {
+          throw err;
+        }
+      }
+      this.cloud.info = cloudInfo;
+
+      if (this.supportsEmeter) {
+        try {
+          await this.emeter.getRealtime(sendOptions);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (!message.includes('Emeter module is not supported')) {
+            throw err;
+          }
+        }
+      }
+
+      // SMART wall-switch devices currently do not expose legacy schedule module.
+      this.schedule.nextAction = { err_code: 0 };
+
+      return {
+        sysInfo: this.sysInfo,
+        cloud: { info: this.cloud.info },
+        emeter: { realtime: this.emeter.realtime },
+        schedule: { nextAction: this.schedule.nextAction },
+      };
+    }
+
     // force TCP unless overridden here
     const sendOptionsForGetInfo: SendOptions =
       sendOptions == null ? {} : sendOptions;

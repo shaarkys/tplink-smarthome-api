@@ -433,6 +433,43 @@ describe('Client', function () {
       lightChild.closeConnection();
     });
 
+    it('should route SMART setAlias/reboot/reset through SMART methods', async function () {
+      const client = new Client({
+        defaultSendOptions: { transport: 'klap' },
+      });
+      const plug = client.getPlug({
+        host: '127.0.0.1',
+        sysInfo: smartSwitchSysInfo,
+      });
+
+      const sendCommandStub = sinon.stub(plug, 'sendCommand');
+      const smartStub = sinon.stub(plug, 'sendSmartCommand');
+      smartStub
+        .withArgs(
+          'set_device_info',
+          {
+            nickname: Buffer.from('Kitchen Light/Fan', 'utf8').toString('base64'),
+          },
+          undefined,
+        )
+        .resolves({ err_code: 0 });
+      smartStub
+        .withArgs('device_reboot', { delay: 1 }, undefined)
+        .resolves({ err_code: 0 });
+      smartStub
+        .withArgs('device_reset', undefined, undefined)
+        .resolves({ err_code: 0 });
+
+      expect(await plug.setAlias('Kitchen Light/Fan')).to.equal(true);
+      expect(plug.alias).to.equal('Kitchen Light/Fan');
+      await plug.reboot(1);
+      await plug.reset(1);
+
+      expect(sendCommandStub).to.not.have.been.called;
+
+      plug.closeConnection();
+    });
+
     it('should route SMART timer through auto_off config methods', async function () {
       const client = new Client({
         defaultSendOptions: { transport: 'aes' },
@@ -501,33 +538,95 @@ describe('Client', function () {
       lightChild.closeConnection();
     });
 
-    it('should reject unsupported SMART away/schedule legacy module calls explicitly', async function () {
+    it('should route SMART away/schedule calls through SMART methods', async function () {
       const client = new Client({
         defaultSendOptions: { transport: 'klap' },
       });
+      const smartScheduleSysInfo = JSON.parse(JSON.stringify(smartSwitchSysInfo));
+      smartScheduleSysInfo.components = [
+        ...smartScheduleSysInfo.components,
+        'schedule',
+        'antitheft',
+      ];
+      smartScheduleSysInfo.children = smartScheduleSysInfo.children.map((child) => ({
+        ...child,
+        components: [...new Set([...(child.components || []), 'schedule', 'antitheft'])],
+      }));
       const lightChild = client.getPlug({
         host: '127.0.0.1',
-        sysInfo: smartSwitchSysInfo,
+        sysInfo: smartScheduleSysInfo,
         childId: '00',
       });
 
       const sendCommandStub = sinon.stub(lightChild, 'sendCommand');
+      const smartStub = sinon
+        .stub(lightChild, 'sendSmartCommand')
+        .callsFake(async (method) => {
+          if (method === 'get_antitheft_rules') {
+            return { enable: false, rule_list: [] };
+          }
+          if (method === 'set_antitheft_all_enable') {
+            return { err_code: 0 };
+          }
+          if (method === 'get_schedule_rules') {
+            return {
+              enable: false,
+              rule_list: [],
+              start_index: 0,
+              sum: 0,
+            };
+          }
+          if (method === 'get_next_event') {
+            return {};
+          }
+          if (method === 'add_schedule_rule') {
+            return { id: 'S1' };
+          }
+          if (method === 'remove_schedule_rules') {
+            return { err_code: 0 };
+          }
+          return {};
+        });
 
-      await expect(lightChild.away.getRules()).to.eventually.be.rejectedWith(
-        'away.getRules is not supported for SMART devices',
-      );
-      await expect(lightChild.schedule.getRules()).to.eventually.be.rejectedWith(
-        'schedule.getRules is not supported for SMART devices',
-      );
-      await expect(
-        lightChild.schedule.addRule({
-          powerState: true,
-          start: 60,
-          daysOfWeek: [1, 2, 3, 4, 5],
-        }),
-      ).to.eventually.be.rejectedWith(
-        'schedule.addRule is not supported for SMART devices',
-      );
+      const awayRules = await lightChild.away.getRules();
+      expect(awayRules).to.containSubset({
+        err_code: 0,
+        rule_list: [],
+      });
+      expect(await lightChild.away.setOverallEnable(true)).to.containSubset({
+        err_code: 0,
+      });
+
+      const scheduleRules = await lightChild.schedule.getRules();
+      expect(scheduleRules).to.containSubset({
+        err_code: 0,
+        rule_list: [],
+      });
+      const nextAction = await lightChild.schedule.getNextAction();
+      expect(nextAction).to.containSubset({
+        err_code: 0,
+      });
+      const addRuleResponse = await lightChild.schedule.addRule({
+        powerState: true,
+        start: 60,
+        daysOfWeek: [1, 2, 3, 4, 5],
+      });
+      expect(addRuleResponse).to.containSubset({
+        id: 'S1',
+      });
+      expect(await lightChild.schedule.deleteRule('S1')).to.containSubset({
+        err_code: 0,
+      });
+      expect(
+        smartStub.getCalls().map((call) => call.args[0]).filter(Boolean),
+      ).to.include.members([
+        'get_antitheft_rules',
+        'set_antitheft_all_enable',
+        'get_schedule_rules',
+        'get_next_event',
+        'add_schedule_rule',
+        'remove_schedule_rules',
+      ]);
 
       expect(sendCommandStub).to.not.have.been.called;
 
@@ -550,7 +649,7 @@ describe('Client', function () {
       plug.closeConnection();
     });
 
-    it('should route SMART emeter realtime reads through energy methods and keep stats unsupported explicit', async function () {
+    it('should route SMART emeter realtime reads and map periodic stats for SMART devices', async function () {
       const client = new Client({
         defaultSendOptions: { transport: 'aes' },
       });
@@ -579,6 +678,18 @@ describe('Client', function () {
         .resolves({
           current_power: 1.5,
         });
+      smartStub
+        .withArgs('get_runtime_stat', { year: 2026, month: 1 }, undefined)
+        .rejects(new Error('method not supported'));
+      smartStub
+        .withArgs('get_runtime_stat', { year: 2026 }, undefined)
+        .rejects(new Error('method not supported'));
+      smartStub
+        .withArgs('erase_emeter_stat', undefined, undefined)
+        .rejects(new Error('method not supported'));
+      smartStub
+        .withArgs('erase_runtime_stat', undefined, undefined)
+        .resolves({ err_code: 0 });
 
       const realtime = await plug.emeter.getRealtime();
       expect(realtime).to.containSubset({
@@ -588,14 +699,98 @@ describe('Client', function () {
         total: 0.056,
       });
 
-      await expect(plug.emeter.getDayStats(2026, 1)).to.eventually.be.rejectedWith(
-        'emeter.getDayStats is not supported for SMART devices',
-      );
+      const dayStats = await plug.emeter.getDayStats(2026, 1);
+      expect(dayStats).to.containSubset({
+        err_code: 0,
+      });
+      expect(dayStats.day_list).to.be.an('array').with.length(1);
+      expect(dayStats.day_list[0]).to.containSubset({
+        year: 2026,
+        month: 1,
+        energy: 56,
+      });
+
+      const monthStats = await plug.emeter.getMonthStats(2026);
+      expect(monthStats).to.containSubset({
+        err_code: 0,
+      });
+      expect(monthStats.month_list).to.be.an('array').with.length(1);
+      expect(monthStats.month_list[0]).to.containSubset({
+        year: 2026,
+        energy: 56,
+      });
+
+      expect(await plug.emeter.eraseStats()).to.containSubset({
+        err_code: 0,
+      });
 
       plug.closeConnection();
     });
 
-    it('should route SMART time/cloud reads and keep unsupported cloud writes explicit', async function () {
+    it('should report supportsEmeter from SMART energy_monitoring component', function () {
+      const client = new Client({
+        defaultSendOptions: { transport: 'klap' },
+      });
+      const smartEnergySysInfo = JSON.parse(JSON.stringify(smartSwitchSysInfo));
+      smartEnergySysInfo.components = [
+        ...smartEnergySysInfo.components,
+        'energy_monitoring',
+      ];
+
+      const noEnergy = client.getPlug({
+        host: '127.0.0.1',
+        sysInfo: smartSwitchSysInfo,
+      });
+      const withEnergy = client.getPlug({
+        host: '127.0.0.1',
+        sysInfo: smartEnergySysInfo,
+      });
+
+      expect(noEnergy.supportsEmeter).to.equal(false);
+      expect(withEnergy.supportsEmeter).to.equal(true);
+
+      noEnergy.closeConnection();
+      withEnergy.closeConnection();
+    });
+
+    it('should use SMART-safe getInfo() composition without legacy aggregate rpc', async function () {
+      const client = new Client({
+        defaultSendOptions: { transport: 'aes' },
+      });
+      const smartEnergySysInfo = JSON.parse(JSON.stringify(smartSwitchSysInfo));
+      smartEnergySysInfo.components = [
+        ...smartEnergySysInfo.components,
+        'energy_monitoring',
+      ];
+      const plug = client.getPlug({
+        host: '127.0.0.1',
+        sysInfo: smartEnergySysInfo,
+      });
+
+      const sendCommandStub = sinon.stub(plug, 'sendCommand');
+      const smartStub = sinon.stub(plug, 'sendSmartCommand');
+      smartStub
+        .withArgs('get_device_info', undefined, undefined)
+        .resolves({ device_on: true });
+      smartStub
+        .withArgs('get_connect_cloud_state', undefined, undefined)
+        .resolves({ status: 0 });
+      smartStub
+        .withArgs('get_emeter_data', undefined, undefined)
+        .resolves({ power_mw: 2000, total_wh: 150 });
+
+      const info = await plug.getInfo();
+      expect(info).to.containSubset({
+        cloud: { info: { err_code: 0, status: 0 } },
+        emeter: { realtime: { power_mw: 2000, power: 2, total_wh: 150 } },
+        schedule: { nextAction: { err_code: 0 } },
+      });
+      expect(sendCommandStub).to.not.have.been.called;
+
+      plug.closeConnection();
+    });
+
+    it('should route SMART time/cloud reads and cloud admin calls through SMART methods', async function () {
       const client = new Client({
         defaultSendOptions: { transport: 'klap' },
       });
@@ -615,6 +810,16 @@ describe('Client', function () {
       smartStub
         .withArgs('get_connect_cloud_state', undefined, undefined)
         .resolves({ status: 0 });
+      smartStub
+        .withArgs('bind', { username: 'user', password: 'pass' }, undefined)
+        .resolves({});
+      smartStub.withArgs('unbind', undefined, undefined).resolves({});
+      smartStub
+        .withArgs('get_intl_fw_list', undefined, undefined)
+        .resolves({ fw_list: [] });
+      smartStub
+        .withArgs('set_server_url', { server: 'tplink.com' }, undefined)
+        .resolves({});
 
       const timeInfo = await plug.time.getTime();
       const timezoneInfo = await plug.time.getTimezone();
@@ -634,9 +839,19 @@ describe('Client', function () {
         status: 0,
       });
 
-      await expect(plug.cloud.bind('user', 'pass')).to.eventually.be.rejectedWith(
-        'bind is not supported for SMART devices',
-      );
+      expect(await plug.cloud.bind('user', 'pass')).to.containSubset({
+        err_code: 0,
+      });
+      expect(await plug.cloud.unbind()).to.containSubset({
+        err_code: 0,
+      });
+      expect(await plug.cloud.getFirmwareList()).to.containSubset({
+        err_code: 0,
+        fw_list: [],
+      });
+      expect(await plug.cloud.setServerUrl('tplink.com')).to.containSubset({
+        err_code: 0,
+      });
 
       plug.closeConnection();
     });

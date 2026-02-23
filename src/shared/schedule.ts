@@ -236,15 +236,76 @@ export default abstract class Schedule {
     );
   }
 
-  private assertLegacyOnlyMethod(
-    methodName: string,
+  private async ensureSmartSupported(
     sendOptions?: SendOptions,
-  ): void {
-    if (this.isSmartPath(sendOptions)) {
+  ): Promise<void> {
+    if (
+      'negotiateSmartComponents' in this.device &&
+      typeof this.device.negotiateSmartComponents === 'function'
+    ) {
+      await this.device.negotiateSmartComponents(sendOptions);
+    }
+    if (
+      'hasComponent' in this.device &&
+      typeof this.device.hasComponent === 'function' &&
+      !this.device.hasComponent('schedule', this.childId)
+    ) {
       throw new Error(
-        `${methodName} is not supported for SMART devices in tplink-smarthome-api yet.`,
+        'Schedule module is not supported for this SMART device scope',
       );
     }
+  }
+
+  private toLegacyStyleNextActionResponse(
+    response: unknown,
+  ): ScheduleNextActionResponse {
+    if (!isObjectLike(response)) {
+      throw new Error(
+        `Unexpected SMART schedule next-event response: ${JSON.stringify(response)}`,
+      );
+    }
+    return {
+      err_code: 0,
+      ...response,
+    };
+  }
+
+  private toLegacyStyleRulesResponse(response: unknown): ScheduleRulesResponse {
+    if (!isObjectLike(response) || !Array.isArray(response.rule_list)) {
+      throw new Error(
+        `Unexpected SMART schedule rules response: ${JSON.stringify(response)}`,
+      );
+    }
+    const normalizedRules = response.rule_list.map((rule, index) => {
+      if (isObjectLike(rule) && typeof rule.id === 'string') {
+        return rule as ScheduleRuleWithId;
+      }
+      if (isObjectLike(rule)) {
+        return {
+          ...rule,
+          id: `smart-schedule-${index}`,
+        } as ScheduleRuleWithId;
+      }
+      return { id: `smart-schedule-${index}` } as ScheduleRuleWithId;
+    });
+    return {
+      err_code: 0,
+      ...response,
+      rule_list: normalizedRules,
+    };
+  }
+
+  private toLegacyStyleAckResponse(response: unknown): Record<string, unknown> {
+    if (hasErrCode(response)) {
+      return response;
+    }
+    if (isObjectLike(response)) {
+      return {
+        err_code: 0,
+        ...response,
+      };
+    }
+    return { err_code: 0 };
   }
 
   /**
@@ -256,7 +317,19 @@ export default abstract class Schedule {
   async getNextAction(
     sendOptions?: SendOptions,
   ): Promise<ScheduleNextActionResponse> {
-    this.assertLegacyOnlyMethod('schedule.getNextAction', sendOptions);
+    if (this.isSmartPath(sendOptions)) {
+      await this.ensureSmartSupported(sendOptions);
+      this.nextAction = this.toLegacyStyleNextActionResponse(
+        await this.device.sendSmartCommand(
+          'get_next_event',
+          { start_index: 0 },
+          this.childId,
+          sendOptions,
+        ),
+      );
+      return this.nextAction;
+    }
+
     this.nextAction = extractResponse<ScheduleNextActionResponse>(
       await this.device.sendCommand(
         {
@@ -279,7 +352,18 @@ export default abstract class Schedule {
    * @throws {@link ResponseError}
    */
   async getRules(sendOptions?: SendOptions): Promise<ScheduleRulesResponse> {
-    this.assertLegacyOnlyMethod('schedule.getRules', sendOptions);
+    if (this.isSmartPath(sendOptions)) {
+      await this.ensureSmartSupported(sendOptions);
+      return this.toLegacyStyleRulesResponse(
+        await this.device.sendSmartCommand(
+          'get_schedule_rules',
+          { start_index: 0, schedule_mode: '' },
+          this.childId,
+          sendOptions,
+        ),
+      );
+    }
+
     return extractResponse<ScheduleRulesResponse>(
       await this.device.sendCommand(
         {
@@ -326,7 +410,21 @@ export default abstract class Schedule {
     rule: object,
     sendOptions?: SendOptions,
   ): Promise<{ id: string }> {
-    this.assertLegacyOnlyMethod('schedule.addRule', sendOptions);
+    if (this.isSmartPath(sendOptions)) {
+      await this.ensureSmartSupported(sendOptions);
+      const response = await this.device.sendSmartCommand(
+        'add_schedule_rule',
+        { schedule_rule: rule },
+        this.childId,
+        sendOptions,
+      );
+      if (isObjectLike(response) && typeof response.id === 'string') {
+        return response as { id: string };
+      }
+      // Some devices return empty ack payloads; preserve API contract.
+      return { id: '' };
+    }
+
     return extractResponse<{ id: string }>(
       await this.device.sendCommand(
         {
@@ -350,7 +448,23 @@ export default abstract class Schedule {
    * @throws {@link ResponseError}
    */
   async editRule(rule: object, sendOptions?: SendOptions): Promise<unknown> {
-    this.assertLegacyOnlyMethod('schedule.editRule', sendOptions);
+    if (this.isSmartPath(sendOptions)) {
+      await this.ensureSmartSupported(sendOptions);
+      const ruleObject = isObjectLike(rule)
+        ? (rule as Record<string, unknown>)
+        : {};
+      const response = await this.device.sendSmartCommand(
+        'edit_schedule_rule',
+        {
+          id: ruleObject.id,
+          schedule_rule: rule,
+        },
+        this.childId,
+        sendOptions,
+      );
+      return this.toLegacyStyleAckResponse(response);
+    }
+
     return this.device.sendCommand(
       {
         [this.apiModuleName]: { edit_rule: rule },
@@ -368,7 +482,17 @@ export default abstract class Schedule {
    * @throws {@link ResponseError}
    */
   async deleteAllRules(sendOptions?: SendOptions): Promise<unknown> {
-    this.assertLegacyOnlyMethod('schedule.deleteAllRules', sendOptions);
+    if (this.isSmartPath(sendOptions)) {
+      await this.ensureSmartSupported(sendOptions);
+      const response = await this.device.sendSmartCommand(
+        'remove_schedule_rules',
+        undefined,
+        this.childId,
+        sendOptions,
+      );
+      return this.toLegacyStyleAckResponse(response);
+    }
+
     return this.device.sendCommand(
       {
         [this.apiModuleName]: { delete_all_rules: {} },
@@ -386,7 +510,17 @@ export default abstract class Schedule {
    * @throws {@link ResponseError}
    */
   async deleteRule(id: string, sendOptions?: SendOptions): Promise<unknown> {
-    this.assertLegacyOnlyMethod('schedule.deleteRule', sendOptions);
+    if (this.isSmartPath(sendOptions)) {
+      await this.ensureSmartSupported(sendOptions);
+      const response = await this.device.sendSmartCommand(
+        'remove_schedule_rules',
+        { ids: [id] },
+        this.childId,
+        sendOptions,
+      );
+      return this.toLegacyStyleAckResponse(response);
+    }
+
     return this.device.sendCommand(
       {
         [this.apiModuleName]: { delete_rule: { id } },
@@ -407,7 +541,17 @@ export default abstract class Schedule {
     enable: boolean,
     sendOptions?: SendOptions,
   ): Promise<unknown> {
-    this.assertLegacyOnlyMethod('schedule.setOverallEnable', sendOptions);
+    if (this.isSmartPath(sendOptions)) {
+      await this.ensureSmartSupported(sendOptions);
+      const response = await this.device.sendSmartCommand(
+        'set_schedule_all_enable',
+        { enable },
+        this.childId,
+        sendOptions,
+      );
+      return this.toLegacyStyleAckResponse(response);
+    }
+
     return this.device.sendCommand(
       {
         [this.apiModuleName]: {
@@ -431,7 +575,17 @@ export default abstract class Schedule {
     month: number,
     sendOptions?: SendOptions,
   ): Promise<unknown> {
-    this.assertLegacyOnlyMethod('schedule.getDayStats', sendOptions);
+    if (this.isSmartPath(sendOptions)) {
+      await this.ensureSmartSupported(sendOptions);
+      const response = await this.device.sendSmartCommand(
+        'get_schedule_day_runtime',
+        { year, month },
+        this.childId,
+        sendOptions,
+      );
+      return this.toLegacyStyleAckResponse(response);
+    }
+
     return this.device.sendCommand(
       {
         [this.apiModuleName]: { get_daystat: { year, month } },
@@ -452,7 +606,17 @@ export default abstract class Schedule {
     year: number,
     sendOptions?: SendOptions,
   ): Promise<unknown> {
-    this.assertLegacyOnlyMethod('schedule.getMonthStats', sendOptions);
+    if (this.isSmartPath(sendOptions)) {
+      await this.ensureSmartSupported(sendOptions);
+      const response = await this.device.sendSmartCommand(
+        'get_schedule_month_runtime',
+        { year },
+        this.childId,
+        sendOptions,
+      );
+      return this.toLegacyStyleAckResponse(response);
+    }
+
     return this.device.sendCommand(
       {
         [this.apiModuleName]: { get_monthstat: { year } },
@@ -470,7 +634,17 @@ export default abstract class Schedule {
    * @throws {@link ResponseError}
    */
   async eraseStats(sendOptions?: SendOptions): Promise<unknown> {
-    this.assertLegacyOnlyMethod('schedule.eraseStats', sendOptions);
+    if (this.isSmartPath(sendOptions)) {
+      await this.ensureSmartSupported(sendOptions);
+      const response = await this.device.sendSmartCommand(
+        'remove_all_schedule_runtime',
+        undefined,
+        this.childId,
+        sendOptions,
+      );
+      return this.toLegacyStyleAckResponse(response);
+    }
+
     return this.device.sendCommand(
       {
         [this.apiModuleName]: { erase_runtime_stat: {} },
