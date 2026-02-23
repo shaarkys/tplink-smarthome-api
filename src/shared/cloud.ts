@@ -10,6 +10,7 @@ export type CloudInfo = {
   username?: string;
   server?: string;
   binded?: number;
+  status?: number;
   cld_connection?: number;
   illegalType?: number;
   tcspStatus?: number;
@@ -31,6 +32,41 @@ export default class Cloud {
     readonly apiModuleName: string,
   ) {}
 
+  private isSmartPath(sendOptions?: SendOptions): boolean {
+    return (
+      'shouldUseSmartMethods' in this.device &&
+      typeof this.device.shouldUseSmartMethods === 'function' &&
+      this.device.shouldUseSmartMethods(sendOptions)
+    );
+  }
+
+  private async ensureSupported(sendOptions?: SendOptions): Promise<void> {
+    if (
+      'negotiateSmartComponents' in this.device &&
+      typeof this.device.negotiateSmartComponents === 'function'
+    ) {
+      await this.device.negotiateSmartComponents(sendOptions);
+    }
+    if (
+      'hasComponent' in this.device &&
+      typeof this.device.hasComponent === 'function' &&
+      !this.device.hasComponent('cloud_connect', undefined)
+    ) {
+      throw new Error('Cloud module is not supported for this device scope');
+    }
+  }
+
+  private assertLegacyOnlyMethod(
+    methodName: string,
+    sendOptions?: SendOptions,
+  ): void {
+    if (this.isSmartPath(sendOptions)) {
+      throw new Error(
+        `${methodName} is not supported for SMART devices in tplink-smarthome-api yet.`,
+      );
+    }
+  }
+
   /**
    * Gets device's TP-Link cloud info.
    *
@@ -39,6 +75,27 @@ export default class Cloud {
    * @throws {@link ResponseError}
    */
   async getInfo(sendOptions?: SendOptions): Promise<CloudInfo & HasErrCode> {
+    if (this.isSmartPath(sendOptions)) {
+      await this.ensureSupported(sendOptions);
+      const response = await this.device.sendSmartCommand(
+        'get_connect_cloud_state',
+        undefined,
+        undefined,
+        sendOptions,
+      );
+      if (!isCloudInfo(response)) {
+        throw new Error(
+          `Unexpected SMART cloud response: ${JSON.stringify(response)}`,
+        );
+      }
+      const normalizedResponse: CloudInfo & HasErrCode = {
+        err_code: 0,
+        ...response,
+      };
+      this.info = normalizedResponse;
+      return normalizedResponse;
+    }
+
     this.info = extractResponse<CloudInfo & HasErrCode>(
       await this.device.sendCommand(
         {
@@ -67,6 +124,7 @@ export default class Cloud {
     password: string,
     sendOptions?: SendOptions,
   ): Promise<unknown> {
+    this.assertLegacyOnlyMethod('bind', sendOptions);
     return this.device.sendCommand(
       {
         [this.apiModuleName]: { bind: { username, password } },
@@ -84,6 +142,7 @@ export default class Cloud {
    * @returns parsed JSON response
    */
   async unbind(sendOptions?: SendOptions): Promise<unknown> {
+    this.assertLegacyOnlyMethod('unbind', sendOptions);
     return this.device.sendCommand(
       {
         [this.apiModuleName]: { unbind: {} },
@@ -101,6 +160,7 @@ export default class Cloud {
    * @returns parsed JSON response
    */
   async getFirmwareList(sendOptions?: SendOptions): Promise<unknown> {
+    this.assertLegacyOnlyMethod('getFirmwareList', sendOptions);
     return this.device.sendCommand(
       {
         [this.apiModuleName]: { get_intl_fw_list: {} },
@@ -122,6 +182,7 @@ export default class Cloud {
     server: string,
     sendOptions?: SendOptions,
   ): Promise<unknown> {
+    this.assertLegacyOnlyMethod('setServerUrl', sendOptions);
     return this.device.sendCommand(
       {
         [this.apiModuleName]: { set_server_url: { server } },

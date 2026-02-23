@@ -329,6 +329,8 @@ describe('Client', function () {
       device_on: false,
       components: [
         'device',
+        'cloud_connect',
+        'time',
         'led',
         'brightness',
         'preset',
@@ -427,6 +429,52 @@ describe('Client', function () {
       );
 
       lightChild.closeConnection();
+    });
+
+    it('should route SMART time/cloud reads and keep unsupported cloud writes explicit', async function () {
+      const client = new Client({
+        defaultSendOptions: { transport: 'klap' },
+      });
+      const plug = client.getPlug({
+        host: '127.0.0.1',
+        sysInfo: smartSwitchSysInfo,
+      });
+
+      const smartStub = sinon.stub(plug, 'sendSmartCommand');
+      smartStub
+        .withArgs('get_device_time', undefined, undefined)
+        .resolves({
+          timestamp: 1700000000,
+          time_diff: -300,
+          region: 'America/New_York',
+        });
+      smartStub
+        .withArgs('get_connect_cloud_state', undefined, undefined)
+        .resolves({ status: 0 });
+
+      const timeInfo = await plug.time.getTime();
+      const timezoneInfo = await plug.time.getTimezone();
+      const cloudInfo = await plug.cloud.getInfo();
+
+      expect(timeInfo).to.containSubset({
+        err_code: 0,
+        timestamp: 1700000000,
+        time_diff: -300,
+      });
+      expect(timezoneInfo).to.containSubset({
+        err_code: 0,
+        region: 'America/New_York',
+      });
+      expect(cloudInfo).to.containSubset({
+        err_code: 0,
+        status: 0,
+      });
+
+      await expect(plug.cloud.bind('user', 'pass')).to.eventually.be.rejectedWith(
+        'bind is not supported for SMART devices',
+      );
+
+      plug.closeConnection();
     });
 
     it('should use SMART LED module for getLedState/setLedState', async function () {
