@@ -501,6 +501,39 @@ describe('Client', function () {
       lightChild.closeConnection();
     });
 
+    it('should reject unsupported SMART away/schedule legacy module calls explicitly', async function () {
+      const client = new Client({
+        defaultSendOptions: { transport: 'klap' },
+      });
+      const lightChild = client.getPlug({
+        host: '127.0.0.1',
+        sysInfo: smartSwitchSysInfo,
+        childId: '00',
+      });
+
+      const sendCommandStub = sinon.stub(lightChild, 'sendCommand');
+
+      await expect(lightChild.away.getRules()).to.eventually.be.rejectedWith(
+        'away.getRules is not supported for SMART devices',
+      );
+      await expect(lightChild.schedule.getRules()).to.eventually.be.rejectedWith(
+        'schedule.getRules is not supported for SMART devices',
+      );
+      await expect(
+        lightChild.schedule.addRule({
+          powerState: true,
+          start: 60,
+          daysOfWeek: [1, 2, 3, 4, 5],
+        }),
+      ).to.eventually.be.rejectedWith(
+        'schedule.addRule is not supported for SMART devices',
+      );
+
+      expect(sendCommandStub).to.not.have.been.called;
+
+      lightChild.closeConnection();
+    });
+
     it('should route SMART time/cloud reads and keep unsupported cloud writes explicit', async function () {
       const client = new Client({
         defaultSendOptions: { transport: 'klap' },

@@ -46,6 +46,21 @@ export default class Away {
     readonly childId: string | undefined = undefined,
   ) {}
 
+  private isSmartPath(sendOptions?: SendOptions): boolean {
+    return this.device.shouldUseSmartMethods(sendOptions);
+  }
+
+  private assertLegacyOnlyMethod(
+    methodName: string,
+    sendOptions?: SendOptions,
+  ): void {
+    if (this.isSmartPath(sendOptions)) {
+      throw new Error(
+        `${methodName} is not supported for SMART devices in tplink-smarthome-api yet.`,
+      );
+    }
+  }
+
   /**
    * Gets Away Rules.
    *
@@ -55,6 +70,7 @@ export default class Away {
   async getRules(
     sendOptions?: SendOptions,
   ): Promise<HasRuleListWithRuleIds & HasErrCode> {
+    this.assertLegacyOnlyMethod('away.getRules', sendOptions);
     return extractResponse<HasRuleListWithRuleIds & HasErrCode>(
       await this.device.sendCommand(
         {
@@ -95,6 +111,7 @@ export default class Away {
     rule: AwayRuleInput,
     sendOptions?: SendOptions,
   ): Promise<unknown> {
+    this.assertLegacyOnlyMethod('away.addRule', sendOptions);
     const {
       start,
       end,
@@ -131,6 +148,7 @@ export default class Away {
     rule: AwayRuleInput & { id: string },
     sendOptions?: SendOptions,
   ): Promise<unknown> {
+    this.assertLegacyOnlyMethod('away.editRule', sendOptions);
     const {
       id,
       start,
@@ -166,6 +184,7 @@ export default class Away {
    * @throws {@link ResponseError}
    */
   async deleteAllRules(sendOptions?: SendOptions): Promise<unknown> {
+    this.assertLegacyOnlyMethod('away.deleteAllRules', sendOptions);
     return this.device.sendCommand(
       {
         [this.apiModuleName]: { delete_all_rules: {} },
@@ -183,6 +202,7 @@ export default class Away {
    * @throws {@link ResponseError}
    */
   async deleteRule(id: string, sendOptions?: SendOptions): Promise<unknown> {
+    this.assertLegacyOnlyMethod('away.deleteRule', sendOptions);
     return this.device.sendCommand(
       {
         [this.apiModuleName]: { delete_rule: { id } },
@@ -203,6 +223,7 @@ export default class Away {
     enable: boolean | 0 | 1,
     sendOptions?: SendOptions,
   ): Promise<unknown> {
+    this.assertLegacyOnlyMethod('away.setOverallEnable', sendOptions);
     return this.device.sendCommand(
       {
         [this.apiModuleName]: {
