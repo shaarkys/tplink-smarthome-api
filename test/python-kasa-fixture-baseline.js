@@ -192,4 +192,106 @@ describe('python-kasa fixture baseline', function () {
     expect(childDevice.dimmer.brightness).to.equal(33);
     childDevice.closeConnection();
   });
+
+  it('routes KS240 child timer through SMART auto_off methods', async function () {
+    const fixture = loadFixture('KS240(US)_1.0_1.0.5.min.json');
+    const sysInfo = toLegacyPlugSysInfo(fixture);
+    sysInfo.components = ['device', 'child_device', 'auto_off'];
+    sysInfo.children = sysInfo.children.map((child) => {
+      if (child.category === 'kasa.switch.outlet.sub-dimmer') {
+        return {
+          ...child,
+          components: ['device', 'auto_off'],
+        };
+      }
+      return {
+        ...child,
+        components: ['device', 'fan_control'],
+      };
+    });
+    const childId =
+      fixture.get_child_device_list.child_device_list[0].device_id;
+    const client = new Client({
+      defaultSendOptions: { transport: 'aes' },
+    });
+
+    const childDevice = client.getPlug({
+      host: '127.0.0.1',
+      sysInfo,
+      childId,
+    });
+
+    const sendStub = sinon.stub(childDevice, 'send').callsFake(async (request) => {
+      if (request.method !== 'control_child') {
+        return JSON.stringify({ error_code: 0, result: {} });
+      }
+      const method = request.params?.requestData?.method;
+      if (method === 'get_auto_off_config') {
+        return JSON.stringify({
+          error_code: 0,
+          result: {
+            responseData: {
+              error_code: 0,
+              result: { enable: true, delay_min: 5 },
+            },
+          },
+        });
+      }
+      if (method === 'set_auto_off_config') {
+        return JSON.stringify({
+          error_code: 0,
+          result: {
+            responseData: {
+              error_code: 0,
+              result: { ack: true },
+            },
+          },
+        });
+      }
+      return JSON.stringify({ error_code: 0, result: {} });
+    });
+
+    const rules = await childDevice.timer.getRules();
+    expect(rules.rule_list[0]).to.containSubset({
+      id: 'auto_off',
+      enable: 1,
+      delay: 300,
+      act: 0,
+    });
+
+    const addResponse = await childDevice.timer.addRule({
+      delay: 120,
+      powerState: false,
+      deleteExisting: true,
+    });
+    expect(addResponse).to.containSubset({
+      err_code: 0,
+      id: 'auto_off',
+    });
+
+    expect(sendStub.firstCall.args[0]).to.containSubset({
+      method: 'control_child',
+      params: {
+        device_id: childId,
+        requestData: {
+          method: 'get_auto_off_config',
+        },
+      },
+    });
+    expect(sendStub.secondCall.args[0]).to.containSubset({
+      method: 'control_child',
+      params: {
+        device_id: childId,
+        requestData: {
+          method: 'set_auto_off_config',
+          params: {
+            enable: true,
+            delay_min: 2,
+          },
+        },
+      },
+    });
+
+    childDevice.closeConnection();
+  });
 });
