@@ -433,6 +433,43 @@ describe('Client', function () {
       lightChild.closeConnection();
     });
 
+    it('should route SMART setAlias/reboot/reset through SMART methods', async function () {
+      const client = new Client({
+        defaultSendOptions: { transport: 'klap' },
+      });
+      const plug = client.getPlug({
+        host: '127.0.0.1',
+        sysInfo: smartSwitchSysInfo,
+      });
+
+      const sendCommandStub = sinon.stub(plug, 'sendCommand');
+      const smartStub = sinon.stub(plug, 'sendSmartCommand');
+      smartStub
+        .withArgs(
+          'set_device_info',
+          {
+            nickname: Buffer.from('Kitchen Light/Fan', 'utf8').toString('base64'),
+          },
+          undefined,
+        )
+        .resolves({ err_code: 0 });
+      smartStub
+        .withArgs('device_reboot', { delay: 1 }, undefined)
+        .resolves({ err_code: 0 });
+      smartStub
+        .withArgs('device_reset', undefined, undefined)
+        .resolves({ err_code: 0 });
+
+      expect(await plug.setAlias('Kitchen Light/Fan')).to.equal(true);
+      expect(plug.alias).to.equal('Kitchen Light/Fan');
+      await plug.reboot(1);
+      await plug.reset(1);
+
+      expect(sendCommandStub).to.not.have.been.called;
+
+      plug.closeConnection();
+    });
+
     it('should route SMART timer through auto_off config methods', async function () {
       const client = new Client({
         defaultSendOptions: { transport: 'aes' },
@@ -591,6 +628,69 @@ describe('Client', function () {
       await expect(plug.emeter.getDayStats(2026, 1)).to.eventually.be.rejectedWith(
         'emeter.getDayStats is not supported for SMART devices',
       );
+
+      plug.closeConnection();
+    });
+
+    it('should report supportsEmeter from SMART energy_monitoring component', function () {
+      const client = new Client({
+        defaultSendOptions: { transport: 'klap' },
+      });
+      const smartEnergySysInfo = JSON.parse(JSON.stringify(smartSwitchSysInfo));
+      smartEnergySysInfo.components = [
+        ...smartEnergySysInfo.components,
+        'energy_monitoring',
+      ];
+
+      const noEnergy = client.getPlug({
+        host: '127.0.0.1',
+        sysInfo: smartSwitchSysInfo,
+      });
+      const withEnergy = client.getPlug({
+        host: '127.0.0.1',
+        sysInfo: smartEnergySysInfo,
+      });
+
+      expect(noEnergy.supportsEmeter).to.equal(false);
+      expect(withEnergy.supportsEmeter).to.equal(true);
+
+      noEnergy.closeConnection();
+      withEnergy.closeConnection();
+    });
+
+    it('should use SMART-safe getInfo() composition without legacy aggregate rpc', async function () {
+      const client = new Client({
+        defaultSendOptions: { transport: 'aes' },
+      });
+      const smartEnergySysInfo = JSON.parse(JSON.stringify(smartSwitchSysInfo));
+      smartEnergySysInfo.components = [
+        ...smartEnergySysInfo.components,
+        'energy_monitoring',
+      ];
+      const plug = client.getPlug({
+        host: '127.0.0.1',
+        sysInfo: smartEnergySysInfo,
+      });
+
+      const sendCommandStub = sinon.stub(plug, 'sendCommand');
+      const smartStub = sinon.stub(plug, 'sendSmartCommand');
+      smartStub
+        .withArgs('get_device_info', undefined, undefined)
+        .resolves({ device_on: true });
+      smartStub
+        .withArgs('get_connect_cloud_state', undefined, undefined)
+        .resolves({ status: 0 });
+      smartStub
+        .withArgs('get_emeter_data', undefined, undefined)
+        .resolves({ power_mw: 2000, total_wh: 150 });
+
+      const info = await plug.getInfo();
+      expect(info).to.containSubset({
+        cloud: { info: { err_code: 0, status: 0 } },
+        emeter: { realtime: { power_mw: 2000, power: 2, total_wh: 150 } },
+        schedule: { nextAction: { err_code: 0 } },
+      });
+      expect(sendCommandStub).to.not.have.been.called;
 
       plug.closeConnection();
     });
