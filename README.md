@@ -29,8 +29,15 @@ Many other TP-Link Plug and Bulb models may work as well. Note that Tapo devices
 - If `sysInfo` includes encryption metadata (`mgt_encrypt_schm.encrypt_type` and optional `http_port`), device defaults are inferred automatically (`klap`/`aes` transport and port) unless you explicitly override them.
 - For SMART requests over authenticated transports, use `client.sendSmart(...)`, `device.sendSmartCommand(...)`, and `device.sendSmartRequests(...)` (including child-scoped `control_child` wrapping).
 - Initial SMART switch support includes SMART power/LED paths and high-level helpers for `fan`, `lightPreset`, `lightTransition`, and `overheatProtection` (including child-scoped KS240 channels).
-- SMART switch support now also includes dimmer brightness/switch-state (`set_device_info`), timer mapping to SMART `auto_off`, SMART emeter realtime mapping (`get_emeter_data` with `get_energy_usage` fallback), and SMART read paths for `time` (`get_device_time`) and `cloud` (`get_connect_cloud_state`).
-- On SMART devices, legacy cloud write operations (`bind`, `unbind`, `getFirmwareList`, `setServerUrl`) and non-equivalent legacy dimmer/timer/away/schedule/emeter-stats operations now fail explicitly instead of sending incompatible legacy RPCs.
+- SMART switch support now also includes:
+  - dimmer brightness/switch-state (`set_device_info`)
+  - timer mapping to SMART `auto_off`
+  - away/schedule mapping (`get_antitheft_rules`, `get_schedule_rules`, `get_next_event`, plus SMART write/delete/enable calls)
+  - SMART emeter realtime mapping (`get_emeter_data` with `get_energy_usage` fallback)
+  - SMART emeter periodic stats compatibility (`get_runtime_stat` when available, fallback synthesis from `get_energy_usage`)
+  - SMART time/cloud read paths (`get_device_time`, `get_connect_cloud_state`)
+  - SMART cloud admin/write attempts (`bind`, `unbind`, `getFirmwareList`, `setServerUrl`) using method candidates for device-family differences
+- Some SMART write/admin methods vary by firmware/model; this library uses best-effort SMART method candidates and throws when the device does not expose a compatible method.
 - SMART switch capabilities now use component negotiation (`component_nego`, child component lists) for module gating. You can call `await plug.negotiateSmartComponents()` explicitly; `getSysInfo()` over SMART transport performs this lazily on first use.
 - Full python-kasa parity is still in progress; not every SMART component has a dedicated module yet.
 
