@@ -534,6 +534,67 @@ describe('Client', function () {
       lightChild.closeConnection();
     });
 
+    it('should reject SMART emeter calls when energy_monitoring is not available', async function () {
+      const client = new Client({
+        defaultSendOptions: { transport: 'klap' },
+      });
+      const plug = client.getPlug({
+        host: '127.0.0.1',
+        sysInfo: smartSwitchSysInfo,
+      });
+
+      await expect(plug.emeter.getRealtime()).to.eventually.be.rejectedWith(
+        'Emeter module is not supported for this device scope',
+      );
+
+      plug.closeConnection();
+    });
+
+    it('should route SMART emeter realtime reads through energy methods and keep stats unsupported explicit', async function () {
+      const client = new Client({
+        defaultSendOptions: { transport: 'aes' },
+      });
+      const smartEnergySysInfo = JSON.parse(JSON.stringify(smartSwitchSysInfo));
+      smartEnergySysInfo.components = [
+        ...smartEnergySysInfo.components,
+        'energy_monitoring',
+      ];
+      const plug = client.getPlug({
+        host: '127.0.0.1',
+        sysInfo: smartEnergySysInfo,
+      });
+
+      const smartStub = sinon.stub(plug, 'sendSmartCommand');
+      smartStub
+        .withArgs('get_emeter_data', undefined, undefined)
+        .rejects(new Error('method not supported'));
+      smartStub
+        .withArgs('get_energy_usage', undefined, undefined)
+        .resolves({
+          current_power: 1234,
+          today_energy: 56,
+        });
+      smartStub
+        .withArgs('get_current_power', undefined, undefined)
+        .resolves({
+          current_power: 1.5,
+        });
+
+      const realtime = await plug.emeter.getRealtime();
+      expect(realtime).to.containSubset({
+        power_mw: 1234,
+        power: 1.234,
+        total_wh: 56,
+        total: 0.056,
+      });
+
+      await expect(plug.emeter.getDayStats(2026, 1)).to.eventually.be.rejectedWith(
+        'emeter.getDayStats is not supported for SMART devices',
+      );
+
+      plug.closeConnection();
+    });
+
     it('should route SMART time/cloud reads and keep unsupported cloud writes explicit', async function () {
       const client = new Client({
         defaultSendOptions: { transport: 'klap' },
