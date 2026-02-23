@@ -5,7 +5,12 @@ import {
   hasRuleListWithRuleIds,
   type HasRuleListWithRuleIds,
 } from '../shared/schedule';
-import { extractResponse, hasErrCode, type HasErrCode } from '../utils';
+import {
+  extractResponse,
+  hasErrCode,
+  isObjectLike,
+  type HasErrCode,
+} from '../utils';
 import type Plug from './index';
 
 export type AwayRule = {
@@ -50,15 +55,54 @@ export default class Away {
     return this.device.shouldUseSmartMethods(sendOptions);
   }
 
-  private assertLegacyOnlyMethod(
-    methodName: string,
+  private async ensureSmartSupported(
     sendOptions?: SendOptions,
-  ): void {
-    if (this.isSmartPath(sendOptions)) {
+  ): Promise<void> {
+    await this.device.negotiateSmartComponents(sendOptions);
+    if (!this.device.hasComponent('antitheft', this.childId)) {
       throw new Error(
-        `${methodName} is not supported for SMART devices in tplink-smarthome-api yet.`,
+        'Away module is not supported for this SMART device scope',
       );
     }
+  }
+
+  private toLegacyStyleResponse(
+    response: unknown,
+  ): HasRuleListWithRuleIds & HasErrCode {
+    if (!isObjectLike(response) || !Array.isArray(response.rule_list)) {
+      throw new Error(
+        `Unexpected SMART away response: ${JSON.stringify(response)}`,
+      );
+    }
+
+    const rules = response.rule_list.map((rule, index) => {
+      if (isObjectLike(rule) && typeof rule.id === 'string') {
+        return rule as { id: string } & Record<string, unknown>;
+      }
+      if (isObjectLike(rule)) {
+        return { ...rule, id: `smart-away-${index}` };
+      }
+      return { id: `smart-away-${index}` };
+    });
+
+    return {
+      err_code: 0,
+      ...response,
+      rule_list: rules,
+    };
+  }
+
+  private toLegacyStyleAckResponse(response: unknown): Record<string, unknown> {
+    if (hasErrCode(response)) {
+      return response;
+    }
+    if (isObjectLike(response)) {
+      return {
+        err_code: 0,
+        ...response,
+      };
+    }
+    return { err_code: 0 };
   }
 
   /**
@@ -70,7 +114,18 @@ export default class Away {
   async getRules(
     sendOptions?: SendOptions,
   ): Promise<HasRuleListWithRuleIds & HasErrCode> {
-    this.assertLegacyOnlyMethod('away.getRules', sendOptions);
+    if (this.isSmartPath(sendOptions)) {
+      await this.ensureSmartSupported(sendOptions);
+      return this.toLegacyStyleResponse(
+        await this.device.sendSmartCommand(
+          'get_antitheft_rules',
+          undefined,
+          this.childId,
+          sendOptions,
+        ),
+      );
+    }
+
     return extractResponse<HasRuleListWithRuleIds & HasErrCode>(
       await this.device.sendCommand(
         {
@@ -111,7 +166,6 @@ export default class Away {
     rule: AwayRuleInput,
     sendOptions?: SendOptions,
   ): Promise<unknown> {
-    this.assertLegacyOnlyMethod('away.addRule', sendOptions);
     const {
       start,
       end,
@@ -127,6 +181,17 @@ export default class Away {
       enable: enable ? 1 : 0,
       ...createRule({ start, end, daysOfWeek }),
     };
+
+    if (this.isSmartPath(sendOptions)) {
+      await this.ensureSmartSupported(sendOptions);
+      const response = await this.device.sendSmartCommand(
+        'add_antitheft_rule',
+        { rule: awayRule },
+        this.childId,
+        sendOptions,
+      );
+      return this.toLegacyStyleAckResponse(response);
+    }
 
     return this.device.sendCommand(
       {
@@ -148,7 +213,6 @@ export default class Away {
     rule: AwayRuleInput & { id: string },
     sendOptions?: SendOptions,
   ): Promise<unknown> {
-    this.assertLegacyOnlyMethod('away.editRule', sendOptions);
     const {
       id,
       start,
@@ -167,6 +231,20 @@ export default class Away {
       ...createRule({ start, end, daysOfWeek }),
     };
 
+    if (this.isSmartPath(sendOptions)) {
+      await this.ensureSmartSupported(sendOptions);
+      const response = await this.device.sendSmartCommand(
+        'edit_antitheft_rule',
+        {
+          id,
+          rule: awayRule,
+        },
+        this.childId,
+        sendOptions,
+      );
+      return this.toLegacyStyleAckResponse(response);
+    }
+
     return this.device.sendCommand(
       {
         [this.apiModuleName]: { edit_rule: awayRule },
@@ -184,7 +262,17 @@ export default class Away {
    * @throws {@link ResponseError}
    */
   async deleteAllRules(sendOptions?: SendOptions): Promise<unknown> {
-    this.assertLegacyOnlyMethod('away.deleteAllRules', sendOptions);
+    if (this.isSmartPath(sendOptions)) {
+      await this.ensureSmartSupported(sendOptions);
+      const response = await this.device.sendSmartCommand(
+        'remove_antitheft_rules',
+        undefined,
+        this.childId,
+        sendOptions,
+      );
+      return this.toLegacyStyleAckResponse(response);
+    }
+
     return this.device.sendCommand(
       {
         [this.apiModuleName]: { delete_all_rules: {} },
@@ -202,7 +290,17 @@ export default class Away {
    * @throws {@link ResponseError}
    */
   async deleteRule(id: string, sendOptions?: SendOptions): Promise<unknown> {
-    this.assertLegacyOnlyMethod('away.deleteRule', sendOptions);
+    if (this.isSmartPath(sendOptions)) {
+      await this.ensureSmartSupported(sendOptions);
+      const response = await this.device.sendSmartCommand(
+        'remove_antitheft_rules',
+        { ids: [id] },
+        this.childId,
+        sendOptions,
+      );
+      return this.toLegacyStyleAckResponse(response);
+    }
+
     return this.device.sendCommand(
       {
         [this.apiModuleName]: { delete_rule: { id } },
@@ -223,7 +321,17 @@ export default class Away {
     enable: boolean | 0 | 1,
     sendOptions?: SendOptions,
   ): Promise<unknown> {
-    this.assertLegacyOnlyMethod('away.setOverallEnable', sendOptions);
+    if (this.isSmartPath(sendOptions)) {
+      await this.ensureSmartSupported(sendOptions);
+      const response = await this.device.sendSmartCommand(
+        'set_antitheft_all_enable',
+        { enable: Boolean(enable) },
+        this.childId,
+        sendOptions,
+      );
+      return this.toLegacyStyleAckResponse(response);
+    }
+
     return this.device.sendCommand(
       {
         [this.apiModuleName]: {
