@@ -54,6 +54,12 @@ export {
 } from './plug';
 export type { default as Away, AwayRule, AwayRuleInput } from './plug/away';
 export type {
+  default as AmbientLight,
+  AmbientLightConfigResponse,
+  AmbientLightDeviceConfig,
+  AmbientLightPreset,
+} from './plug/ambient-light';
+export type {
   default as Dimmer,
   DimmerActionInput,
   DimmerTransitionInput,
@@ -67,6 +73,13 @@ export type {
   default as LightTransition,
   LightTransitionInfo,
 } from './plug/light-transition';
+export type {
+  default as Motion,
+  MotionAdcValueResponse,
+  MotionConfigResponse,
+  MotionRangeName,
+  MotionState,
+} from './plug/motion';
 export type { default as OverheatProtection } from './plug/overheat-protection';
 export type {
   default as PlugSchedule,
