@@ -17,6 +17,16 @@ function loadFixture(fileName) {
   return JSON.parse(fs.readFileSync(fixturePath, 'utf8'));
 }
 
+function loadIotFixture(fileName) {
+  const fixturePath = path.join(
+    __dirname,
+    'fixtures',
+    'python-kasa-iot',
+    fileName,
+  );
+  return JSON.parse(fs.readFileSync(fixturePath, 'utf8'));
+}
+
 function toLegacyPlugSysInfo(fixture) {
   const discovery = fixture.discovery_result.result;
   const info = fixture.get_device_info;
@@ -50,6 +60,130 @@ function toLegacyPlugSysInfo(fixture) {
 }
 
 describe('python-kasa fixture baseline', function () {
+  it('wires KS200M as a legacy local plug with PIR/LAS support', function () {
+    const fixture = loadIotFixture('KS200M(US)_1.0_1.0.12.min.json');
+    const sysInfo = fixture.system.get_sysinfo;
+    const client = new Client({
+      defaultSendOptions: { transport: 'tcp' },
+    });
+
+    const device = client.getPlug({ host: '127.0.0.1', sysInfo });
+    expect(device.port).to.equal(9999);
+    expect(device.supportsDimmer).to.equal(false);
+    expect(device.supportsMotionSensor).to.equal(true);
+    expect(device.supportsAmbientLight).to.equal(true);
+    device.closeConnection();
+  });
+
+  it('maps KS200M PIR calls to the legacy smartlife.iot.PIR namespace', async function () {
+    const fixture = loadIotFixture('KS200M(US)_1.0_1.0.12.min.json');
+    const sysInfo = fixture.system.get_sysinfo;
+    const client = new Client();
+    const device = client.getPlug({ host: '127.0.0.1', sysInfo });
+
+    const sendCommandStub = sinon
+      .stub(device, 'sendCommand')
+      .callsFake(async (command) => {
+        const pir = command['smartlife.iot.PIR'];
+        if (pir && pir.get_config && pir.get_adc_value) {
+          return { 'smartlife.iot.PIR': fixture['smartlife.iot.PIR'] };
+        }
+        if (pir && (pir.set_trigger_sens || pir.set_cold_time || pir.set_enable)) {
+          return { err_code: 0 };
+        }
+        throw new Error(`Unexpected command: ${JSON.stringify(command)}`);
+      });
+
+    const state = await device.motion.getInfo();
+    expect(state).to.containSubset({
+      enabled: true,
+      rangeIndex: 1,
+      rangeName: 'Mid',
+      threshold: 50,
+      adcValue: 512,
+      inactivityTimeout: 600000,
+    });
+
+    await device.motion.setThreshold(42);
+    await device.motion.setInactivityTimeout(120000);
+    await device.motion.setEnabled(false);
+
+    expect(sendCommandStub.firstCall.args[0]).to.containSubset({
+      'smartlife.iot.PIR': {
+        get_config: {},
+        get_adc_value: {},
+      },
+    });
+    expect(sendCommandStub.secondCall.args[0]).to.containSubset({
+      'smartlife.iot.PIR': {
+        set_trigger_sens: { index: 3, value: 42 },
+      },
+    });
+    expect(sendCommandStub.thirdCall.args[0]).to.containSubset({
+      'smartlife.iot.PIR': {
+        set_cold_time: { cold_time: 120000 },
+      },
+    });
+    expect(sendCommandStub.getCall(3).args[0]).to.containSubset({
+      'smartlife.iot.PIR': {
+        set_enable: { enable: 0 },
+      },
+    });
+
+    device.closeConnection();
+  });
+
+  it('maps KS200M LAS calls to the legacy smartlife.iot.LAS namespace', async function () {
+    const fixture = loadIotFixture('KS200M(US)_1.0_1.0.12.min.json');
+    const sysInfo = fixture.system.get_sysinfo;
+    const client = new Client();
+    const device = client.getPlug({ host: '127.0.0.1', sysInfo });
+
+    const sendCommandStub = sinon
+      .stub(device, 'sendCommand')
+      .callsFake(async (command) => {
+        const las = command['smartlife.iot.LAS'];
+        if (las && las.get_config && las.get_current_brt) {
+          return { 'smartlife.iot.LAS': fixture['smartlife.iot.LAS'] };
+        }
+        if (las && (las.set_brt_level || las.set_enable)) {
+          return { err_code: 0 };
+        }
+        throw new Error(`Unexpected command: ${JSON.stringify(command)}`);
+      });
+
+    const info = await device.ambientLight.getInfo();
+    expect(info).to.containSubset({
+      brightness: 8,
+      config: {
+        enable: 1,
+      },
+    });
+    expect(device.ambientLight.presets).to.be.an('array').with.length.greaterThan(0);
+
+    await device.ambientLight.setBrightnessLimit(15);
+    await device.ambientLight.setEnabled(false);
+
+    expect(sendCommandStub.firstCall.args[0]).to.containSubset({
+      'smartlife.iot.LAS': {
+        get_config: {},
+        get_current_brt: {},
+      },
+    });
+    expect(sendCommandStub.secondCall.args[0]).to.containSubset({
+      'smartlife.iot.LAS': {
+        set_brt_level: { index: 0, value: 15 },
+      },
+    });
+    expect(sendCommandStub.thirdCall.args[0]).to.containSubset({
+      'smartlife.iot.LAS': {
+        set_enable: { enable: 0 },
+      },
+    });
+
+    device.closeConnection();
+  });
+
   it('infers AES transport defaults from KS240 fixture discovery metadata', function () {
     const fixture = loadFixture('KS240(US)_1.0_1.0.5.min.json');
     const sysInfo = toLegacyPlugSysInfo(fixture);
@@ -225,7 +359,10 @@ describe('python-kasa fixture baseline', function () {
       if (request.method !== 'control_child') {
         return JSON.stringify({ error_code: 0, result: {} });
       }
-      const method = request.params?.requestData?.method;
+      const method =
+        request.params &&
+        request.params.requestData &&
+        request.params.requestData.method;
       if (method === 'get_auto_off_config') {
         return JSON.stringify({
           error_code: 0,

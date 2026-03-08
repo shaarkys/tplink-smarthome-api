@@ -17,11 +17,13 @@ import {
   isObjectLike,
   type HasErrCode,
 } from '../utils';
+import AmbientLight from './ambient-light';
 import Away from './away';
 import Dimmer from './dimmer';
 import Fan from './fan';
 import LightPreset from './light-preset';
 import LightTransition from './light-transition';
+import Motion from './motion';
 import OverheatProtection from './overheat-protection';
 import Schedule from './schedule';
 import SmartLed from './smart-led';
@@ -207,6 +209,8 @@ class Plug extends Device {
 
   away: Away;
 
+  ambientLight: AmbientLight;
+
   cloud: Cloud;
 
   dimmer: Dimmer;
@@ -216,6 +220,8 @@ class Plug extends Device {
   lightPreset: LightPreset;
 
   lightTransition: LightTransition;
+
+  motion: Motion;
 
   overheatProtection: OverheatProtection;
 
@@ -261,6 +267,15 @@ class Plug extends Device {
     this.away = new Away(this, 'anti_theft', childId);
 
     /**
+     * @borrows AmbientLight#getConfig as Plug.ambientLight#getConfig
+     * @borrows AmbientLight#getCurrentBrightness as Plug.ambientLight#getCurrentBrightness
+     * @borrows AmbientLight#getInfo as Plug.ambientLight#getInfo
+     * @borrows AmbientLight#setEnabled as Plug.ambientLight#setEnabled
+     * @borrows AmbientLight#setBrightnessLimit as Plug.ambientLight#setBrightnessLimit
+     */
+    this.ambientLight = new AmbientLight(this, 'smartlife.iot.LAS', childId);
+
+    /**
      * @borrows Cloud#getInfo as Plug.cloud#getInfo
      * @borrows Cloud#bind as Plug.cloud#bind
      * @borrows Cloud#unbind as Plug.cloud#unbind
@@ -289,6 +304,17 @@ class Plug extends Device {
     this.lightPreset = new LightPreset(this, childId);
 
     this.lightTransition = new LightTransition(this, childId);
+
+    /**
+     * @borrows Motion#getConfig as Plug.motion#getConfig
+     * @borrows Motion#getAdcValue as Plug.motion#getAdcValue
+     * @borrows Motion#getInfo as Plug.motion#getInfo
+     * @borrows Motion#setEnabled as Plug.motion#setEnabled
+     * @borrows Motion#setRange as Plug.motion#setRange
+     * @borrows Motion#setThreshold as Plug.motion#setThreshold
+     * @borrows Motion#setInactivityTimeout as Plug.motion#setInactivityTimeout
+     */
+    this.motion = new Motion(this, 'smartlife.iot.PIR', childId);
 
     this.overheatProtection = new OverheatProtection(this, childId);
 
@@ -842,6 +868,23 @@ class Plug extends Device {
       );
     }
     return this.getBrightnessValue() !== undefined;
+  }
+
+  /**
+   * True if this legacy wall switch exposes a PIR motion sensor namespace.
+   */
+  get supportsMotionSensor(): boolean {
+    return (
+      !this.isSmartProtocolSwitch() &&
+      (/PIR/i.test(this.description ?? '') || /^KS200M/i.test(this.model))
+    );
+  }
+
+  /**
+   * True if this legacy wall switch exposes LAS ambient light controls.
+   */
+  get supportsAmbientLight(): boolean {
+    return this.supportsMotionSensor;
   }
 
   /**
