@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [Unreleased]
+
+### Features
+
+* **Client:** add authenticated `get_device_info` bootstrap/normalization and SMART TDP v2 discovery on UDP ports 20002 and 20004 while preserving legacy discovery.
+
 ## [5.0.0](https://github.com/plasticrake/tplink-smarthome-api/compare/v4.2.0...v5.0.0) (2023-11-15)
 
 

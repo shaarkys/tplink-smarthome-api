@@ -11,6 +11,11 @@ const { default: Client } = require('../src/client');
 const { default: Device } = require('../src/device');
 const { default: Plug } = require('../src/plug');
 const { default: Bulb } = require('../src/bulb');
+const { default: SmartError } = require('../src/smart-error');
+const {
+  calculateTdpCrc32,
+  parseSmartDiscoveryPacket,
+} = require('../src/smart-discovery');
 
 const { compareMac } = require('../src/utils');
 
@@ -29,6 +34,39 @@ const validPlugDiscoveryResponse = {
     },
   },
 };
+
+const validSmartDeviceInfo = {
+  device_id: 'smart-device-id',
+  fw_ver: '1.0.0 Build 1',
+  hw_ver: '1.0',
+  mac: '00-11-22-33-44-55',
+  model: 'KS225',
+  type: 'SMART.KASASWITCH',
+  nickname: Buffer.from('SMART test device').toString('base64'),
+  device_on: true,
+  brightness: 42,
+};
+
+const validSmartDeviceInfoResponse = {
+  error_code: 0,
+  result: validSmartDeviceInfo,
+};
+
+function createSmartDiscoveryResponse(payload) {
+  const body = Buffer.from(JSON.stringify(payload), 'utf8');
+  const response = Buffer.alloc(16 + body.length);
+  response.writeUInt8(2, 0);
+  response.writeUInt8(1, 1);
+  response.writeUInt16BE(2, 2);
+  response.writeUInt16BE(body.length, 4);
+  response.writeUInt8(17, 6);
+  response.writeUInt8(0, 7);
+  response.writeUInt32BE(0x12345678, 8);
+  response.writeUInt32BE(0x5a6b7c8d, 12);
+  body.copy(response, 16);
+  response.writeUInt32BE(calculateTdpCrc32(response), 12);
+  return response;
+}
 
 describe('Client', function () {
   describe('constructor', function () {
@@ -143,12 +181,12 @@ describe('Client', function () {
       plug.closeConnection();
     });
 
-    it('should default getSysInfo port to 80 when client transport is authenticated', async function () {
+    it('should send SMART get_device_info and normalize sysinfo for an authenticated client transport', async function () {
       const client = new Client({
         defaultSendOptions: { transport: 'aes' },
       });
       const connection = {
-        send: sinon.stub().resolves(JSON.stringify(validPlugDiscoveryResponse)),
+        send: sinon.stub().resolves(JSON.stringify(validSmartDeviceInfoResponse)),
         close: sinon.stub(),
       };
       const createConnectionStub = sinon
@@ -156,19 +194,34 @@ describe('Client', function () {
         .returns(connection);
 
       const sysInfo = await client.getSysInfo('127.0.0.1');
-      expect(sysInfo).to.deep.equal(validPlugDiscoveryResponse.system.get_sysinfo);
+      expect(sysInfo).to.containSubset({
+        alias: 'SMART test device',
+        deviceId: validSmartDeviceInfo.device_id,
+        model: 'KS225',
+        sw_ver: validSmartDeviceInfo.fw_ver,
+        hw_ver: validSmartDeviceInfo.hw_ver,
+        type: 'SMART.KASASWITCH',
+        mac: validSmartDeviceInfo.mac,
+        device_on: true,
+        relay_state: 1,
+        brightness: 42,
+        mgt_encrypt_schm: { encrypt_type: 'AES', http_port: 80 },
+      });
       expect(createConnectionStub).to.have.been.calledOnce;
       expect(createConnectionStub.firstCall.args[2]).to.equal(80);
       expect(connection.send).to.have.been.calledOnce;
+      expect(JSON.parse(connection.send.firstCall.args[0])).to.deep.equal({
+        method: 'get_device_info',
+      });
       expect(connection.send.firstCall.args[1]).to.equal(80);
     });
 
-    it('should default getDevice host lookup to 80 when client transport is authenticated', async function () {
+    it('should use SMART bootstrap for getDevice when the default transport is klap', async function () {
       const client = new Client({
         defaultSendOptions: { transport: 'klap' },
       });
       const connection = {
-        send: sinon.stub().resolves(JSON.stringify(validPlugDiscoveryResponse)),
+        send: sinon.stub().resolves(JSON.stringify(validSmartDeviceInfoResponse)),
         close: sinon.stub(),
       };
       const createConnectionStub = sinon
@@ -180,8 +233,50 @@ describe('Client', function () {
       });
 
       expect(createConnectionStub.firstCall.args[2]).to.equal(80);
+      expect(JSON.parse(connection.send.firstCall.args[0])).to.deep.equal({
+        method: 'get_device_info',
+      });
       expect(device.port).to.equal(80);
       device.closeConnection();
+    });
+
+    it('should use an explicit authenticated send transport for SMART getSysInfo', async function () {
+      const client = new Client({
+        defaultSendOptions: { transport: 'tcp' },
+      });
+      const connection = {
+        send: sinon.stub().resolves(JSON.stringify(validSmartDeviceInfoResponse)),
+        close: sinon.stub(),
+      };
+      const createConnectionStub = sinon
+        .stub(client, 'createConnection')
+        .returns(connection);
+
+      const sysInfo = await client.getSysInfo('127.0.0.1', undefined, {
+        transport: 'klap',
+      });
+
+      expect(sysInfo).to.have.property('deviceId', 'smart-device-id');
+      expect(createConnectionStub.firstCall.args[0]).to.equal('klap');
+      expect(JSON.parse(connection.send.firstCall.args[0])).to.deep.equal({
+        method: 'get_device_info',
+      });
+    });
+
+    it('should surface SMART get_device_info errors as SmartError', async function () {
+      const client = new Client({
+        defaultSendOptions: { transport: 'aes' },
+      });
+      const connection = {
+        send: sinon.stub().resolves(JSON.stringify({ error_code: -1501 })),
+        close: sinon.stub(),
+      };
+      sinon.stub(client, 'createConnection').returns(connection);
+
+      await expect(client.getSysInfo('127.0.0.1')).to.be.rejectedWith(
+        SmartError,
+        'error_code: -1501 method: get_device_info',
+      );
     });
 
     it('should not override explicit transport and port with inferred values', function () {
@@ -1047,6 +1142,10 @@ describe('Client', function () {
       client.stopDiscovery();
     });
 
+    afterEach('restore discovery socket stubs', function () {
+      sinon.restore();
+    });
+
     it('should emit device-new when finding a new device', function (done) {
       client
         .startDiscovery({ discoveryInterval: 250 })
@@ -1181,6 +1280,108 @@ describe('Client', function () {
           client.stopDiscovery();
           done();
         });
+    });
+
+    it('should probe and accept TDP/20002 and TDP/20004 with its management port', function (done) {
+      const socket = new EventEmitter();
+      socket.bind = (bindPort, bindAddress, callback) => {
+        expect(bindPort).to.be.undefined;
+        expect(bindAddress).to.be.undefined;
+        callback();
+      };
+      socket.address = () => ({ address: '1.2.3.4', port: 1234, family: 'IPv4' });
+      socket.setBroadcast = sinon.fake();
+      socket.send = sinon.fake();
+      socket.close = sinon.fake();
+      sinon.replace(dgram, 'createSocket', () => socket);
+
+      const smartResponse = createSmartDiscoveryResponse({
+        error_code: 0,
+        result: {
+          device_id: 'smart-discovery-id',
+          device_type: 'SMART.KASASWITCH',
+          device_model: 'KS225(US)',
+          device_name: Buffer.from('Kitchen switch').toString('base64'),
+          mac: '00-11-22-33-44-55',
+          device_on: false,
+          brightness: 25,
+          mgt_encrypt_schm: {
+            encrypt_type: 'KLAP',
+            http_port: 80,
+            is_support_https: false,
+            lv: 2,
+          },
+        },
+      });
+
+      client = new Client();
+      client
+        .startDiscovery({
+          discoveryInterval: 10000,
+          devicesUseDiscoveryPort: true,
+          devices: [{ host: '1.2.3.5' }],
+        })
+        .once('plug-new', (plug) => {
+          try {
+            expect(plug).to.be.instanceof(Plug);
+            expect(plug.host).to.equal('1.2.3.5');
+            expect(plug.defaultSendOptions.transport).to.equal('klap');
+            expect(plug.port).to.equal(80);
+            expect(plug.sysInfo).to.containSubset({
+              alias: 'Kitchen switch',
+              deviceId: 'smart-discovery-id',
+              model: 'KS225(US)',
+              type: 'SMART.KASASWITCH',
+              device_on: false,
+              relay_state: 0,
+              brightness: 25,
+              mgt_encrypt_schm: { encrypt_type: 'KLAP', http_port: 80 },
+            });
+            socket.emit('message', smartResponse, {
+              address: '1.2.3.5',
+              port: 20004,
+            });
+          } catch (error) {
+            client.stopDiscovery();
+            done(error);
+          }
+        })
+        .once('plug-online', (plug) => {
+          try {
+            expect(plug).to.be.instanceof(Plug);
+            expect(plug.port).to.equal(80);
+            client.stopDiscovery();
+            done();
+          } catch (error) {
+            client.stopDiscovery();
+            done(error);
+          }
+        });
+
+      const sentPorts = socket.send.getCalls().map((call) => call.args[3]);
+      expect(sentPorts).to.include(9999);
+      expect(sentPorts).to.include(20002);
+      expect(sentPorts).to.include(20004);
+      const smartProbe = socket.send
+        .getCalls()
+        .find((call) => call.args[3] === 20002).args[0];
+      const smartProbeAlternate = socket.send
+        .getCalls()
+        .find((call) => call.args[3] === 20004).args[0];
+      expect(smartProbeAlternate).to.equal(smartProbe);
+      const parsedProbe = parseSmartDiscoveryPacket(smartProbe);
+      expect(parsedProbe).to.containSubset({
+        version: 2,
+        messageType: 0,
+        opcode: 1,
+        flags: 17,
+      });
+      expect(parsedProbe.payload).to.have.nested.property('params.rsa_key');
+
+      socket.emit('message', smartResponse, {
+        address: '1.2.3.5',
+        port: 20002,
+      });
     });
 
     it('should ignore invalid devices that respond without encryption', function (done) {
