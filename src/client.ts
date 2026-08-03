@@ -22,6 +22,13 @@ import TcpConnection from './network/tcp-connection';
 import UdpConnection from './network/udp-connection';
 import Plug, { hasSysinfoChildren } from './plug';
 import type { Realtime } from './shared/emeter';
+import SmartError from './smart-error';
+import {
+  createSmartDiscoveryProbe,
+  normalizeSmartSysInfo,
+  parseSmartDiscoveryPacket,
+  SMART_DISCOVERY_PORTS,
+} from './smart-discovery';
 import { compareMac, isObjectLike } from './utils';
 
 const discoveryMsgBuf = encrypt('{"system":{"get_sysinfo":{}}}');
@@ -32,6 +39,7 @@ export type DeviceDiscovery = { status: string; seenOnDiscovery: number };
 export type AnyDeviceDiscovery = (Bulb | Plug) & Partial<DeviceDiscovery>;
 
 type SysinfoResponse = { system: { get_sysinfo: Sysinfo } };
+type SmartResponse = { error_code: number; result?: unknown };
 type EmeterResponse = PlugEmeterResponse | BulbEmeterResponse;
 type PlugEmeterResponse = {
   emeter?: { get_realtime?: { err_code: number } & Realtime };
@@ -71,6 +79,10 @@ function isSysinfoResponse(candidate: unknown): candidate is SysinfoResponse {
     isObjectLike(candidate.system) &&
     'get_sysinfo' in candidate.system
   );
+}
+
+function isSmartResponse(candidate: unknown): candidate is SmartResponse {
+  return isObjectLike(candidate) && typeof candidate.error_code === 'number';
 }
 
 function isAuthenticatedTransport(
@@ -286,6 +298,8 @@ class Client extends EventEmitter {
 
   discoveryTimer: NodeJS.Timeout | null = null;
 
+  discoveryTimeoutTimer: NodeJS.Timeout | null = null;
+
   discoveryPacketSequence = 0;
 
   maxSocketId = 0;
@@ -463,6 +477,12 @@ class Client extends EventEmitter {
     sendOptions?: SendOptions,
   ): Promise<Sysinfo> {
     this.log.debug('client.getSysInfo(%j)', { host, port, sendOptions });
+
+    const transport = sendOptions?.transport ?? this.defaultSendOptions.transport;
+    if (isAuthenticatedTransport(transport)) {
+      return this.getSmartSysInfo(host, port, sendOptions, transport);
+    }
+
     const response = await this.send(
       '{"system":{"get_sysinfo":{}}}',
       host,
@@ -476,6 +496,47 @@ class Client extends EventEmitter {
     }
 
     throw new Error(`Unexpected Response: ${response}`);
+  }
+
+  private async getSmartSysInfo(
+    host: string,
+    port: number | undefined,
+    sendOptions: SendOptions | undefined,
+    transport: AuthenticatedTransport,
+  ): Promise<Sysinfo> {
+    const request: SmartRequestPayload = { method: 'get_device_info' };
+    const response = await this.send(request, host, port, sendOptions);
+    let responseObj: unknown;
+    try {
+      responseObj = JSON.parse(response);
+    } catch {
+      throw new Error('Unexpected SMART get_device_info response');
+    }
+
+    if (!isSmartResponse(responseObj)) {
+      throw new Error('Unexpected SMART get_device_info response');
+    }
+    if (responseObj.error_code !== 0) {
+      throw new SmartError(
+        'SMART request failed',
+        responseObj.error_code,
+        request.method,
+        JSON.stringify({ error_code: responseObj.error_code }),
+        JSON.stringify(request),
+      );
+    }
+    if (!isObjectLike(responseObj.result)) {
+      throw new Error('Unexpected SMART get_device_info response');
+    }
+
+    const sysInfo = normalizeSmartSysInfo(responseObj.result, {
+      transport,
+      port: port ?? 80,
+    });
+    if (!isPlugSysinfo(sysInfo)) {
+      throw new Error('Unexpected SMART get_device_info result');
+    }
+    return sysInfo;
   }
 
   /**
@@ -727,9 +788,121 @@ class Client extends EventEmitter {
       const socket = createSocket('udp4');
       this.socket = socket;
 
-      socket.on('message', (msg, rinfo) => {
-        const decryptedMsg = decrypt(msg).toString('utf8');
+      const processDiscoveredSysInfo = (
+        sysInfo: Sysinfo,
+        rinfo: RemoteInfo,
+        useDiscoveryPort: boolean,
+      ): void => {
+        if (deviceTypes && deviceTypes.length > 0) {
+          const deviceType = this.getTypeFromSysInfo(sysInfo);
+          if (!(deviceTypes as string[]).includes(deviceType)) {
+            this.log.debug(
+              `client.startDiscovery(): Filtered out: ${sysInfo.alias} [${sysInfo.deviceId}] (${deviceType}), allowed device types: (%j)`,
+              deviceTypes,
+            );
+            return;
+          }
+        }
 
+        let mac: string;
+        if ('mac' in sysInfo) mac = sysInfo.mac;
+        else if ('mic_mac' in sysInfo) mac = sysInfo.mic_mac;
+        else if ('ethernet_mac' in sysInfo) mac = sysInfo.ethernet_mac;
+        else mac = '';
+
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        if (macAddresses && macAddresses.length > 0) {
+          if (!compareMac(mac, macAddresses)) {
+            this.log.debug(
+              `client.startDiscovery(): Filtered out: ${sysInfo.alias} [${sysInfo.deviceId}] (${mac}), allowed macs: (%j)`,
+              macAddresses,
+            );
+            return;
+          }
+        }
+
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        if (excludeMacAddresses && excludeMacAddresses.length > 0) {
+          if (compareMac(mac, excludeMacAddresses)) {
+            this.log.debug(
+              `client.startDiscovery(): Filtered out: ${sysInfo.alias} [${sysInfo.deviceId}] (${mac}), excluded mac`,
+            );
+            return;
+          }
+        }
+
+        if (typeof filterCallback === 'function' && !filterCallback(sysInfo)) {
+          this.log.debug(
+            `client.startDiscovery(): Filtered out: ${sysInfo.alias} [${sysInfo.deviceId}], callback`,
+          );
+          return;
+        }
+
+        this.createOrUpdateDeviceFromSysInfo({
+          sysInfo,
+          host: rinfo.address,
+          port: useDiscoveryPort ? rinfo.port : undefined,
+          breakoutChildren,
+          options: deviceOptions,
+        });
+      };
+
+      socket.on('message', (msg, rinfo) => {
+        if (
+          SMART_DISCOVERY_PORTS.some(
+            (smartDiscoveryPort) => smartDiscoveryPort === rinfo.port,
+          )
+        ) {
+          try {
+            const packet = parseSmartDiscoveryPacket(msg);
+            const response = packet.payload;
+            if (!isSmartResponse(response)) {
+              throw new Error('Unexpected SMART discovery response');
+            }
+            if (response.error_code !== 0) {
+              throw new SmartError(
+                'SMART discovery request failed',
+                response.error_code,
+                'discovery',
+                JSON.stringify({ error_code: response.error_code }),
+                'TDP v2 discovery probe',
+              );
+            }
+            if (!isObjectLike(response.result)) {
+              throw new Error('Unexpected SMART discovery result');
+            }
+
+            const sysInfo = normalizeSmartSysInfo(response.result);
+            if (!isPlugSysinfo(sysInfo)) {
+              throw new Error('Unexpected SMART discovery device info');
+            }
+
+            this.log.debug(
+              'client.startDiscovery(): received SMART TDP response from %s:%s',
+              rinfo.address,
+              rinfo.port,
+            );
+            // TDP responses originate from UDP/20002 or UDP/20004;
+            // mgt_encrypt_schm controls the TCP request port and must not be
+            // replaced by either discovery source port.
+            processDiscoveredSysInfo(sysInfo, rinfo, false);
+          } catch (err) {
+            this.log.debug(
+              'client.startDiscovery(): invalid SMART TDP response from %s:%s: %s',
+              rinfo.address,
+              rinfo.port,
+              err,
+            );
+            this.emit('discovery-invalid', {
+              rinfo,
+              response: msg,
+              decryptedResponse: msg,
+            });
+          }
+          return;
+        }
+
+        const decryptedMsg = decrypt(msg).toString('utf8');
         this.log.debug(
           `client.startDiscovery(): socket:message From: ${rinfo.address} ${rinfo.port} Message: ${decryptedMsg}`,
         );
@@ -761,60 +934,7 @@ class Client extends EventEmitter {
             return;
           }
 
-          if (deviceTypes && deviceTypes.length > 0) {
-            const deviceType = this.getTypeFromSysInfo(sysInfo);
-            if (!(deviceTypes as string[]).includes(deviceType)) {
-              this.log.debug(
-                `client.startDiscovery(): Filtered out: ${sysInfo.alias} [${sysInfo.deviceId}] (${deviceType}), allowed device types: (%j)`,
-                deviceTypes,
-              );
-              return;
-            }
-          }
-
-          let mac: string;
-          if ('mac' in sysInfo) mac = sysInfo.mac;
-          else if ('mic_mac' in sysInfo) mac = sysInfo.mic_mac;
-          else if ('ethernet_mac' in sysInfo) mac = sysInfo.ethernet_mac;
-          else mac = '';
-
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-          if (macAddresses && macAddresses.length > 0) {
-            if (!compareMac(mac, macAddresses)) {
-              this.log.debug(
-                `client.startDiscovery(): Filtered out: ${sysInfo.alias} [${sysInfo.deviceId}] (${mac}), allowed macs: (%j)`,
-                macAddresses,
-              );
-              return;
-            }
-          }
-
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-          if (excludeMacAddresses && excludeMacAddresses.length > 0) {
-            if (compareMac(mac, excludeMacAddresses)) {
-              this.log.debug(
-                `client.startDiscovery(): Filtered out: ${sysInfo.alias} [${sysInfo.deviceId}] (${mac}), excluded mac`,
-              );
-              return;
-            }
-          }
-
-          if (typeof filterCallback === 'function') {
-            if (!filterCallback(sysInfo)) {
-              this.log.debug(
-                `client.startDiscovery(): Filtered out: ${sysInfo.alias} [${sysInfo.deviceId}], callback`,
-              );
-              return;
-            }
-          }
-
-          this.createOrUpdateDeviceFromSysInfo({
-            sysInfo,
-            host: rinfo.address,
-            port: devicesUseDiscoveryPort ? rinfo.port : undefined,
-            breakoutChildren,
-            options: deviceOptions,
-          });
+          processDiscoveredSysInfo(sysInfo, rinfo, devicesUseDiscoveryPort);
         } catch (err) {
           this.log.debug(
             `client.startDiscovery(): Error processing response: %s\nFrom: ${rinfo.address} ${rinfo.port} Original: [%s] Decrypted: [${decryptedMsg}]`,
@@ -837,6 +957,10 @@ class Client extends EventEmitter {
       });
 
       socket.bind(port, address, () => {
+        if (this.socket !== socket) {
+          socket.close();
+          return;
+        }
         this.isSocketBound = true;
         const sockAddress = socket.address();
         this.log.debug(
@@ -855,10 +979,11 @@ class Client extends EventEmitter {
 
         this.sendDiscovery(socket, broadcast, devices ?? [], offlineTolerance);
         if (discoveryTimeout > 0) {
-          setTimeout(() => {
+          this.discoveryTimeoutTimer = setTimeout(() => {
             this.log.debug(
               'client.startDiscovery: discoveryTimeout reached, stopping discovery',
             );
+            this.discoveryTimeoutTimer = null;
             this.stopDiscovery();
           }, discoveryTimeout);
         }
@@ -951,10 +1076,15 @@ class Client extends EventEmitter {
     this.log.debug('client.stopDiscovery()');
     if (this.discoveryTimer !== null) clearInterval(this.discoveryTimer);
     this.discoveryTimer = null;
+    if (this.discoveryTimeoutTimer !== null) {
+      clearTimeout(this.discoveryTimeoutTimer);
+    }
+    this.discoveryTimeoutTimer = null;
     if (this.isSocketBound) {
       this.isSocketBound = false;
       if (this.socket != null) this.socket.close();
     }
+    this.socket = undefined;
   }
 
   private sendDiscovery(
@@ -989,6 +1119,16 @@ class Client extends EventEmitter {
         return;
       }
       socket.send(discoveryMsgBuf, 0, discoveryMsgBuf.length, 9999, address);
+      const smartDiscoveryMsg = createSmartDiscoveryProbe();
+      SMART_DISCOVERY_PORTS.forEach((smartDiscoveryPort) => {
+        socket.send(
+          smartDiscoveryMsg,
+          0,
+          smartDiscoveryMsg.length,
+          smartDiscoveryPort,
+          address,
+        );
+      });
 
       devices.forEach((d) => {
         this.log.debug('client.sendDiscovery() direct device:', d);
@@ -999,6 +1139,15 @@ class Client extends EventEmitter {
           d.port || 9999,
           d.host,
         );
+        SMART_DISCOVERY_PORTS.forEach((smartDiscoveryPort) => {
+          socket.send(
+            smartDiscoveryMsg,
+            0,
+            smartDiscoveryMsg.length,
+            smartDiscoveryPort,
+            d.host,
+          );
+        });
       });
 
       if (this.discoveryPacketSequence >= Number.MAX_VALUE) {
