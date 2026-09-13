@@ -1014,6 +1014,16 @@ class Plug extends Device {
         ? this.#children.get(normalizedChildId)
         : undefined;
 
+    // Discovery may expose a hashed ID. Parent SMART replies carry the
+    // canonical ID used by direct queries; child replies must not replace it.
+    if (
+      normalizedChildId === undefined &&
+      typeof partial.device_id === 'string' &&
+      partial.device_id.length > 0
+    ) {
+      this.sysInfo.deviceId = partial.device_id;
+    }
+
     if (child !== undefined) {
       if (typeof partial.device_on === 'boolean') {
         child.state = partial.device_on ? 1 : 0;
