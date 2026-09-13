@@ -1186,11 +1186,14 @@ class Plug extends Device {
       };
     }
 
-    // force TCP unless overridden here
+    // Legacy commands can also be carried over authenticated transports.
     const sendOptionsForGetInfo: SendOptions =
       sendOptions == null ? {} : sendOptions;
-    if (!('transport' in sendOptionsForGetInfo))
-      sendOptionsForGetInfo.transport = 'tcp';
+    if (!('transport' in sendOptionsForGetInfo)) {
+      const { transport } = this.defaultSendOptions;
+      sendOptionsForGetInfo.transport =
+        transport === 'klap' || transport === 'aes' ? transport : 'tcp';
+    }
 
     let data: unknown;
     try {

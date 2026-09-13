@@ -129,7 +129,19 @@ export function isPlugSysinfo(candidate: unknown): candidate is PlugSysinfo {
       'children' in candidate ||
       'brightness' in candidate);
 
-  return hasType && hasMac && (hasLegacyShape || hasSmartShape);
+  // TDP discovery for authenticated IOT switches omits legacy feature flags.
+  const hasAuthenticatedIotShape =
+    'type' in candidate &&
+    candidate.type === 'IOT.SMARTPLUGSWITCH' &&
+    'mgt_encrypt_schm' in candidate &&
+    isObjectLike(candidate.mgt_encrypt_schm) &&
+    ['KLAP', 'AES'].includes(String(candidate.mgt_encrypt_schm.encrypt_type)) &&
+    'relay_state' in candidate;
+  return (
+    hasType &&
+    hasMac &&
+    (hasLegacyShape || hasSmartShape || hasAuthenticatedIotShape)
+  );
 }
 
 function isSysinfo(candidate: unknown): candidate is Sysinfo {

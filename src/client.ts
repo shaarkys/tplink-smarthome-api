@@ -193,6 +193,7 @@ export interface DiscoveryOptions {
 export type SendOptions = {
   timeout?: number;
   transport?: 'tcp' | 'udp' | 'klap' | 'aes';
+  protocol?: 'iot' | 'smart';
   useSharedSocket?: boolean;
   sharedSocketTimeout?: number;
 };
@@ -284,6 +285,7 @@ class Client extends EventEmitter {
   defaultSendOptions: Required<SendOptions> = {
     timeout: 10000,
     transport: 'tcp',
+    protocol: 'smart',
     useSharedSocket: false,
     sharedSocketTimeout: 20000,
   };
@@ -479,7 +481,8 @@ class Client extends EventEmitter {
     this.log.debug('client.getSysInfo(%j)', { host, port, sendOptions });
 
     const transport = sendOptions?.transport ?? this.defaultSendOptions.transport;
-    if (isAuthenticatedTransport(transport)) {
+    const protocol = sendOptions?.protocol ?? this.defaultSendOptions.protocol;
+    if (isAuthenticatedTransport(transport) && protocol !== 'iot') {
       return this.getSmartSysInfo(host, port, sendOptions, transport);
     }
 
@@ -696,6 +699,16 @@ class Client extends EventEmitter {
     const resolvedDefaultSendOptions = {
       ...resolvedOptions.defaultSendOptions,
     };
+    const deviceType = 'type' in sysInfo ? sysInfo.type : sysInfo.mic_type;
+    if (
+      resolvedDefaultSendOptions.protocol === undefined &&
+      typeof deviceType === 'string'
+    ) {
+      if (deviceType.startsWith('IOT.'))
+        resolvedDefaultSendOptions.protocol = 'iot';
+      else if (deviceType.startsWith('SMART.'))
+        resolvedDefaultSendOptions.protocol = 'smart';
+    }
 
     if (
       inferredTransport != null &&
