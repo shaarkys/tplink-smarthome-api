@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [5.0.3](https://github.com/shaarkys/tplink-smarthome-api/compare/v5.0.2...v5.0.3) (2026-09-21)
+
+### Diagnostics
+
+* Preserve boolean/binary `new_klap` and `ANS` discovery flags so integrations can compare firmware authentication metadata. Unknown fields remain excluded. Authentication and device control behavior are unchanged.
+
 ## [5.0.2](https://github.com/shaarkys/tplink-smarthome-api/compare/v5.0.1...v5.0.2) (2026-09-21)
 
 ### Bug Fixes

@@ -219,6 +219,13 @@ function getSafeEncryptionScheme(
   if (getNumber(source.lv) !== undefined) {
     scheme.lv = source.lv;
   }
+  // Preserve diagnostic flags without forwarding arbitrary discovery fields.
+  ['new_klap', 'ANS'].forEach((key) => {
+    const value = source[key];
+    if (typeof value === 'boolean' || value === 0 || value === 1) {
+      scheme[key] = value;
+    }
+  });
 
   return scheme;
 }
