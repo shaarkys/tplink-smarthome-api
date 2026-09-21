@@ -103,7 +103,49 @@ describe('SMART dimmer zero brightness', function () {
   }
 
   for (const transport of ['tcp', 'aes', 'klap']) {
-    it(`preserves the legacy IOT zero-brightness command over ${transport}`, async function () {
+    it(`preserves child targeting for legacy IOT brightness zero over ${transport}`, async function () {
+      const plug = createPlug(transport, 'iot', 'light-child');
+      const options = { timeout: 1234 };
+      plug.send = async (payload, sendOptions) => {
+        assert.strictEqual(sendOptions.timeout, 1234);
+        assert.deepStrictEqual(payload, {
+          context: { child_ids: ['light-child'] },
+          'smartlife.iot.dimmer': { set_switch_state: { state: 0 } },
+        });
+        return JSON.stringify({
+          'smartlife.iot.dimmer': { set_switch_state: { err_code: 0 } },
+        });
+      };
+      assert.deepStrictEqual(await plug.dimmer.setBrightness(0, options), {
+        err_code: 0,
+      });
+      assert.strictEqual(plug.dimmer.brightness, 45);
+      assert.strictEqual(plug.children.get('other-child').brightness, 80);
+    });
+
+    it(`preserves legacy IOT positive brightness and propagates off failures over ${transport}`, async function () {
+      const plug = createPlug(transport, 'iot');
+      plug.send = async (payload) => {
+        assert.deepStrictEqual(payload, {
+          'smartlife.iot.dimmer': { set_brightness: { brightness: 25 } },
+        });
+        return JSON.stringify({
+          'smartlife.iot.dimmer': { set_brightness: { err_code: 0 } },
+        });
+      };
+      await plug.dimmer.setBrightness(25);
+      plug.send = async () =>
+        JSON.stringify({
+          'smartlife.iot.dimmer': {
+            set_switch_state: { err_code: -3, err_msg: 'invalid argument' },
+          },
+        });
+      await assert.rejects(plug.dimmer.setBrightness(0), /invalid argument/);
+      assert.strictEqual(plug.dimmer.brightness, 25);
+      assert.strictEqual(plug.sysInfo.relay_state, 1);
+    });
+
+    it(`turns a legacy IOT dimmer off without sending brightness zero over ${transport}`, async function () {
       const plug = createPlug(transport, 'iot');
       let calls = 0;
       plug.send = async (payload) => {
@@ -111,15 +153,15 @@ describe('SMART dimmer zero brightness', function () {
         const request =
           typeof payload === 'string' ? JSON.parse(payload) : payload;
         assert.deepStrictEqual(request, {
-          'smartlife.iot.dimmer': { set_brightness: { brightness: 0 } },
+          'smartlife.iot.dimmer': { set_switch_state: { state: 0 } },
         });
         return JSON.stringify({
-          'smartlife.iot.dimmer': { set_brightness: { err_code: 0 } },
+          'smartlife.iot.dimmer': { set_switch_state: { err_code: 0 } },
         });
       };
       await plug.dimmer.setBrightness(0);
       assert.strictEqual(calls, 1);
-      assert.strictEqual(plug.dimmer.brightness, 0);
+      assert.strictEqual(plug.dimmer.brightness, 70);
       assert.strictEqual(plug.sysInfo.relay_state, 1);
     });
   }

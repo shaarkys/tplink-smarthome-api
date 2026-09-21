@@ -4,6 +4,7 @@ const http = require('http');
 
 const { default: Client } = require('../../src/client');
 const { SmartError } = require('../../src');
+const { normalizeSmartSysInfo } = require('../../src/smart-discovery');
 
 const DEFAULT_TIMEOUT_SECONDS = 86400;
 const SESSION_COOKIE_NAME = 'TP_SESSIONID';
@@ -276,6 +277,69 @@ function createKlapPlug(client, host, port) {
 }
 
 describe('KlapConnection', function () {
+  it('matches independently calculated python-kasa credential hash vectors', function () {
+    // Python hashlib, using python-kasa's documented v1/v2 recipes and dummy credentials.
+    assert.strictEqual(
+      authHashV1('user@example.com', 'secret').toString('hex'),
+      '9d6ce791ce44316e9e52fc1bc9d36496',
+    );
+    assert.strictEqual(
+      authHashV2('user@example.com', 'secret').toString('hex'),
+      'b039216532fc844e9ae0cc8fe3ea911c9ba09c641bb96a3e1f776d93f7b5ae9b',
+    );
+  });
+
+  for (const loginVariant of ['v2', 'v1']) {
+    it(`authenticates an HS220 advertising IOT/KLAP lv=2 with ${loginVariant} and retains IOT commands`, async function () {
+      const info = {
+        ...createPlugSysInfo(),
+        err_code: 0,
+        model: 'HS220(US)',
+        brightness: 76,
+      };
+      const server = createKlapTestServer({
+        loginVariant,
+        requestHandler(request) {
+          assert.deepStrictEqual(request, { system: { get_sysinfo: {} } });
+          return { system: { get_sysinfo: info } };
+        },
+      });
+      const port = await server.start();
+      const client = new Client({
+        credentials: { username: 'user@example.com', password: 'secret' },
+        logLevel: 'silent',
+        defaultSendOptions: { timeout: 1500 },
+      });
+      const device = client.getPlug({
+        host: '127.0.0.1',
+        sysInfo: normalizeSmartSysInfo({
+          device_id: 'discovery-hash',
+          device_model: 'HS220(US)',
+          device_type: 'IOT.SMARTPLUGSWITCH',
+          mac: '00:11:22:33:44:55',
+          mgt_encrypt_schm: {
+            encrypt_type: 'KLAP',
+            http_port: port,
+            lv: 2,
+            new_klap: 1,
+            ANS: true,
+          },
+        }),
+      });
+      try {
+        assert.strictEqual(device.defaultSendOptions.protocol, 'iot');
+        assert.strictEqual(device.defaultSendOptions.transport, 'klap');
+        assert.strictEqual((await device.getSysInfo()).brightness, 76);
+        assert.strictEqual(server.metrics.handshake1Count, 1);
+        assert.strictEqual(server.metrics.handshake2Count, 1);
+        assert.strictEqual(server.metrics.requestCount, 1);
+      } finally {
+        device.closeConnection();
+        await server.stop();
+      }
+    });
+  }
+
   it('defaults device port to 80 when client transport is klap', function () {
     const client = new Client({
       credentials: { username: 'user@example.com', password: 'secret' },
@@ -444,6 +508,10 @@ describe('KlapConnection', function () {
       },
       (error) => {
         assert.match(error.message, /authentication failed/i);
+        assert.match(
+          error.message,
+          /KLAP v2 and v1 credential checks exhausted/,
+        );
         return true;
       },
     );

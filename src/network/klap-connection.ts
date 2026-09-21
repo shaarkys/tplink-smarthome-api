@@ -349,7 +349,7 @@ export default class KlapConnection implements DeviceConnection {
     }
 
     throw new Error(
-      `KlapConnection(${this.description}): authentication failed (challenge mismatch)`,
+      `KlapConnection(${this.description}): authentication failed (challenge mismatch); KLAP v2 and v1 credential checks exhausted`,
     );
   }
 

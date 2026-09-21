@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [5.0.2](https://github.com/shaarkys/tplink-smarthome-api/compare/v5.0.1...v5.0.2) (2026-09-21)
+
+### Bug Fixes
+
+* **Dimmer:** use the existing switch-off command for legacy IOT brightness zero, avoiding HS220 error `-3` while preserving its saved brightness. SMART zero-brightness handling is unchanged.
+
+### Diagnostics and tests
+
+* **KLAP:** clarify when both v2 and v1 credential checks failed. Add explicit HS220 IOT/KLAP login-version-2 regression coverage for v2 authentication and v1 fallback, with encrypted IOT commands. The authentication algorithms already match python-kasa PR #1731; this release does not claim to resolve device-side challenge mismatches.
+
 ## [5.0.1](https://github.com/shaarkys/tplink-smarthome-api/compare/a7a3f1d...v5.0.1) (2026-09-21)
 
 ### Bug Fixes
