@@ -2,7 +2,17 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
-## [Unreleased]
+## [5.0.1](https://github.com/shaarkys/tplink-smarthome-api/compare/a7a3f1d...v5.0.1) (2026-09-21)
+
+### Bug Fixes
+
+* **Dimmer:** turn SMART dimmers off when brightness is set to zero instead of sending invalid `brightness: 0`, which HS220 rejects with error `-1008`. Preserve the saved brightness, child-channel targeting, and existing IOT commands.
+
+### Validation
+
+* Added mocked regression coverage for AES/KLAP parent and child dimmers, command failures, and legacy IOT compatibility. Physical-device confirmation is pending.
+
+## Previously unreleased fork changes
 
 ### Features
 

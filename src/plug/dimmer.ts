@@ -83,6 +83,7 @@ export default class Dimmer {
    * Sets Plug to the specified `brightness`.
    *
    * Sends `dimmer.set_brightness` command. Supports childId when configured on `Plug`.
+   * For SMART dimmers, zero turns the device off without changing its saved brightness.
    * @param   brightness - 0-100
    * @returns parsed JSON response
    * @throws {@link ResponseError}
@@ -93,13 +94,14 @@ export default class Dimmer {
   ): Promise<unknown> {
     if (this.device.shouldUseSmartMethods(sendOptions)) {
       await this.ensureSmartDimmerSupported(sendOptions);
+      const params = brightness === 0 ? { device_on: false } : { brightness };
       const response = await this.device.sendSmartCommand(
         'set_device_info',
-        { brightness },
+        params,
         this.childId,
         sendOptions,
       );
-      this.device.applySmartDeviceInfoPartial({ brightness }, this.childId);
+      this.device.applySmartDeviceInfoPartial(params, this.childId);
       return response;
     }
 
