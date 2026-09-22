@@ -84,6 +84,7 @@ export default class Dimmer {
    *
    * Sends `dimmer.set_brightness` command. Supports childId when configured on `Plug`.
    * Zero turns the device off without changing its saved brightness.
+   * Positive values are rounded to whole percentages, with a minimum of one.
    * @param   brightness - 0-100
    * @returns parsed JSON response
    * @throws {@link ResponseError}
@@ -92,9 +93,16 @@ export default class Dimmer {
     brightness: number,
     sendOptions?: SendOptions,
   ): Promise<unknown> {
+    if (!Number.isFinite(brightness) || brightness < 0 || brightness > 100) {
+      throw new RangeError(
+        'Brightness must be a finite number between 0 and 100',
+      );
+    }
+    // Decimal slider conversions (e.g. 0.28 * 100) can contain float residue.
+    const level = brightness === 0 ? 0 : Math.max(1, Math.round(brightness));
     if (this.device.shouldUseSmartMethods(sendOptions)) {
       await this.ensureSmartDimmerSupported(sendOptions);
-      const params = brightness === 0 ? { device_on: false } : { brightness };
+      const params = level === 0 ? { device_on: false } : { brightness: level };
       const response = await this.device.sendSmartCommand(
         'set_device_info',
         params,
@@ -105,21 +113,21 @@ export default class Dimmer {
       return response;
     }
 
-    if (brightness === 0) {
+    if (level === 0) {
       return this.setSwitchState(false, sendOptions);
     }
 
     const results = this.device.sendCommand(
       {
         [this.apiModuleName]: {
-          set_brightness: { brightness },
+          set_brightness: { brightness: level },
         },
       },
       this.childId,
       sendOptions,
     );
 
-    this.setBrightnessValue(brightness);
+    this.setBrightnessValue(level);
 
     return results;
   }

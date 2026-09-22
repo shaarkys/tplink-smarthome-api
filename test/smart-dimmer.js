@@ -46,6 +46,23 @@ function createPlug(transport, protocol, childId) {
 }
 
 describe('SMART dimmer zero brightness', function () {
+  for (const [transport, protocol] of [
+    ['tcp', 'iot'],
+    ['aes', 'iot'],
+    ['klap', 'iot'],
+    ['aes', 'smart'],
+    ['klap', 'smart'],
+  ]) {
+    it(`${transport}/${protocol}: rejects invalid brightness before sending or changing cache`, async function () {
+      const plug = createPlug(transport, protocol);
+      plug.send = async () =>
+        assert.fail('Invalid input must not reach the device');
+      for (const value of [NaN, Infinity, -1, 101, '28', null]) {
+        await assert.rejects(plug.dimmer.setBrightness(value), RangeError);
+        assert.strictEqual(plug.dimmer.brightness, 70);
+      }
+    });
+  }
   for (const transport of ['aes', 'klap']) {
     for (const childId of [undefined, 'light-child']) {
       const scope = childId ? 'child' : 'parent';
@@ -69,16 +86,26 @@ describe('SMART dimmer zero brightness', function () {
           );
         };
 
-        for (const brightness of [1, 100, 0]) {
+        for (const brightness of [
+          1,
+          0.28 * 100,
+          0.29 * 100,
+          28.6,
+          0.1,
+          100,
+          0,
+        ]) {
           const response = await plug.dimmer.setBrightness(brightness, options);
           assert.deepStrictEqual(response, { ack: true });
           assert.strictEqual(sent[sent.length - 1].method, 'set_device_info');
           assert.deepStrictEqual(
             sent[sent.length - 1].params,
-            brightness === 0 ? { device_on: false } : { brightness },
+            brightness === 0
+              ? { device_on: false }
+              : { brightness: Math.max(1, Math.round(brightness)) },
           );
         }
-        assert.strictEqual(sent.length, 3);
+        assert.strictEqual(sent.length, 7);
         assert.strictEqual(plug.dimmer.brightness, 100);
         if (childId) {
           assert.strictEqual(plug.children.get(childId).state, 0);
@@ -103,6 +130,30 @@ describe('SMART dimmer zero brightness', function () {
   }
 
   for (const transport of ['tcp', 'aes', 'klap']) {
+    for (const childId of [undefined, 'light-child']) {
+      it(`rounds legacy ${transport} brightness to integer percentages (${
+        childId || 'parent'
+      })`, async function () {
+        const plug = createPlug(transport, 'iot', childId);
+        let expected;
+        plug.send = async (payload) => {
+          assert.strictEqual(
+            payload['smartlife.iot.dimmer'].set_brightness.brightness,
+            expected,
+          );
+          if (childId)
+            assert.deepStrictEqual(payload.context.child_ids, [childId]);
+          return JSON.stringify({
+            'smartlife.iot.dimmer': { set_brightness: { err_code: 0 } },
+          });
+        };
+        for (const brightness of [0.28 * 100, 0.29 * 100, 28.6, 0.1, 100]) {
+          expected = Math.max(1, Math.round(brightness));
+          await plug.dimmer.setBrightness(brightness);
+          assert.strictEqual(plug.dimmer.brightness, expected);
+        }
+      });
+    }
     it(`preserves child targeting for legacy IOT brightness zero over ${transport}`, async function () {
       const plug = createPlug(transport, 'iot', 'light-child');
       const options = { timeout: 1234 };

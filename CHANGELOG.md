@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [5.0.4](https://github.com/shaarkys/tplink-smarthome-api/compare/v5.0.3...v5.0.4) (2026-09-22)
+
+* Round dimmer brightness to whole percentages before sending SMART or IOT commands, fixing HS220 error `-1008` caused by floating-point values such as `28.000000000000004`. Preserve explicit zero as off; positive values below 1% become 1%. Reject non-finite or out-of-range inputs before communication.
+
 ## [5.0.3](https://github.com/shaarkys/tplink-smarthome-api/compare/v5.0.2...v5.0.3) (2026-09-21)
 
 ### Diagnostics
